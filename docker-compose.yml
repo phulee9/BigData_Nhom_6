@@ -33,6 +33,17 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
-
+  spark:
+    image: jupyter/pyspark-notebook
+    container_name: pyspark-jupyter
+    ports:
+      - "8888:8888"
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+    volumes:
+      # Ánh xạ toàn bộ thư mục hiện tại vào thư mục làm việc của Jupyter
+      - .:/home/jovyan/work
+    depends_on:
+      - minio
 volumes:
   minio-data:
