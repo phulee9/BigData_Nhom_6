@@ -6,3 +6,5 @@ __pycache__/
 .venv
 linkedin_profile
 linkedin_jobs.csv
+*.index
+*.npy
