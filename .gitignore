@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 .env
 *.csv
+.venv
+linkedin_profile
+linkedin_jobs.csv
+*.index
+*.npy
