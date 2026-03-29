@@ -1,6 +1,0 @@
-kafka-python==2.3.0
-nltk
-spacy
-faiss-cpu==1.13.2
-gdown==5.2.1
-sentence-transformers
