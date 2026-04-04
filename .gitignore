@@ -9,3 +9,6 @@ linkedin_jobs.csv
 *.index
 *.npy
 airflow/logs/
+*.bin
+*.pkl
+*.json
