@@ -1,33 +1,41 @@
-import re
-import nltk
-import spacy
+import re, json, nltk
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
+from pathlib import Path
 
-# ── Setup NLTK ─────────────────────────────────────────
 for pkg in ["wordnet", "omw-1.4", "stopwords"]:
     try:
         nltk.data.find(f"corpora/{pkg}")
     except:
         nltk.download(pkg, quiet=True)
 
-# ── Setup spaCy ────────────────────────────────────────
-try:
-    nlp = spacy.load("en_core_web_lg")
-except OSError:
-    from spacy.cli import download
-    download("en_core_web_lg")
-    nlp = spacy.load("en_core_web_lg")
-
 lemmatizer = WordNetLemmatizer()
 STOP_WORDS  = set(stopwords.words("english"))
 
+# ── Load whitelist ─────────────────────────────────────
+_WHITELIST = None
+
+def get_whitelist() -> set:
+    global _WHITELIST
+    if _WHITELIST is None:
+        wl_path = Path(__file__).parent.parent / \
+                  "recomendation_system" / "skill_whitelist.json"
+        if wl_path.exists():
+            with open(wl_path, "r", encoding="utf-8") as f:
+                _WHITELIST = set(json.load(f))
+            print(f"✓ Loaded whitelist: {len(_WHITELIST):,} skills")
+        else:
+            _WHITELIST = set()
+            print("⚠ Không có whitelist, bỏ qua filter")
+    return _WHITELIST
+
+# ── Synonym Map ────────────────────────────────────────
 SYNONYM_MAP = {
     "sr": "senior", "jr": "junior", "mid": "mid",
-    "lead": "senior", "principal": "senior", "staff": "senior",
+    "lead": "senior", "principal": "senior",
     "intern": "intern", "trainee": "junior",
-    "mgr": "manager", "mngr": "manager", "dir": "director",
-    "vp": "vice president", "svp": "senior vice president",
+    "mgr": "manager", "mngr": "manager",
+    "dir": "director", "vp": "vice president",
     "assoc": "associate", "asst": "assistant",
     "rep": "representative", "exec": "executive",
     "admin": "administrator",
@@ -36,31 +44,43 @@ SYNONYM_MAP = {
     "frontend": "front end", "backend": "back end",
     "fullstack": "full stack", "full-stack": "full stack",
     "qa": "quality assurance",
-    "sdet": "software development engineer in test",
-    "ml": "machine learning", "ai": "artificial intelligence",
+    "ml": "machine learning",
+    "ai": "artificial intelligence",
     "ds": "data scientist", "de": "data engineer",
     "fe": "front end", "be": "back end",
-    "analyst": "analyst", "analytics": "analyst",
     "bi": "business intelligence",
     "biz": "business", "bd": "business development",
     "ba": "business analyst", "pm": "project manager",
-    "pdm": "product manager", "ae": "account executive",
-    "am": "account manager",
-    "mkt": "marketing", "seo": "search engine optimization",
-    "sem": "search engine marketing",
     "hr": "human resources",
-    "hrbp": "human resources business partner",
     "cs": "customer service",
-    "csr": "customer service representative",
-    "rn": "registered nurse", "lpn": "licensed practical nurse",
-    "np": "nurse practitioner", "pa": "physician assistant",
+    "ae": "account executive",
+    "am": "account manager",
+    "mkt": "marketing",
+    "seo": "search engine optimization",
+    "rn": "registered nurse",
+    "lpn": "licensed practical nurse",
+    "np": "nurse practitioner",
     "md": "medical doctor",
-    "ops": "operations", "coo": "chief operating officer",
+    "ops": "operations",
+    "coo": "chief operating officer",
     "cto": "chief technology officer",
     "ceo": "chief executive officer",
     "&": "and", "/": " ",
     "pt": "part time", "ft": "full time",
 }
+
+NOISE_PATTERNS = [
+    r'\b(remote|hybrid|onsite|on.site)\b',
+    r'\b(part.time|full.time|contract|temp|temporary)\b',
+    r'\b(urgent|immediate|opening|opportunity|hiring|wanted)\b',
+    r'\b(vietnam|ho chi minh|hanoi|da nang|singapore|'
+    r'london|new york|california|texas|florida|'
+    r'chicago|boston|seattle|austin|canada|australia)\b',
+    r'\b(f/m/d|m/f/d|w/m/d|m/w/d)\b',
+    r'\b\d+\+?\s*(year|yr|month|week)s?\b',
+    r'[-|\\]+.*$',
+    r'\(.*?\)', r'\[.*?\]',
+]
 
 NOT_JOB_TITLE = {
     "compensation", "experience", "salary", "benefits",
@@ -74,30 +94,33 @@ VALID_SINGLE_WORD = {
     "developer", "designer", "engineer", "manager",
     "nurse", "programmer", "recruiter", "scientist",
     "specialist", "supervisor", "teacher", "therapist",
-    "coordinator", "administrator", "director", "officer"
+    "coordinator", "administrator", "director", "officer",
+    "technician", "mechanic", "driver", "chef", "cook",
+    "attorney", "lawyer", "doctor", "pharmacist",
 }
 
-NOISE_PATTERNS = [
-    r'\b(remote|hybrid|onsite|on.site)\b',
-    r'\b(part.time|full.time|contract|temp|temporary)\b',
-    r'\b(urgent|immediate|opening|opportunity|hiring|wanted)\b',
-    r'\b(vietnam|ho chi minh|hanoi|da nang|singapore|'
-    r'london|new york|california|texas|florida|'
-    r'chicago|boston|seattle|austin)\b',
-    r'\b(f/m/d|m/f/d|w/m/d|m/w/d)\b',
-    r'\b\d+\+?\s*(year|yr|month|week)s?\b',
-    r'[-|\\]+.*$',
-    r'\(.*?\)',
-    r'\[.*?\]',
-]
+# ── Lazy load spaCy ───────────────────────────────────
+_nlp = None
 
+def get_nlp():
+    global _nlp
+    if _nlp is None:
+        import spacy
+        try:
+            _nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            from spacy.cli import download
+            download("en_core_web_sm")
+            _nlp = spacy.load("en_core_web_sm")
+    return _nlp
 
+# ── Clean job_title ────────────────────────────────────
 def process_job_title(text: str) -> str:
-    """spaCy NER xóa ORG/GPE/LOC + synonym + lemmatize"""
     if not isinstance(text, str):
         return ""
 
-    # 1. spaCy NER
+    # spaCy NER
+    nlp = get_nlp()
     doc = nlp(text.strip())
     remove_spans = [
         (ent.start_char, ent.end_char)
@@ -107,25 +130,23 @@ def process_job_title(text: str) -> str:
     for start, end in sorted(remove_spans, reverse=True):
         text = text[:start] + " " + text[end:]
 
-    # 2. Lowercase + noise patterns
+    # Lowercase + noise
     text = text.lower()
     for pattern in NOISE_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
-    # 3. Bỏ ký tự đặc biệt
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # 4. Synonym
+    # Synonym
     for k, v in SYNONYM_MAP.items():
         text = re.sub(rf"\b{k}\b", v, text)
 
-    # 5. Stopword + lemmatize
+    # Stopword + lemmatize
     tokens     = [w for w in text.split() if w not in STOP_WORDS]
     lemmatized = [lemmatizer.lemmatize(w) for w in tokens]
     text       = " ".join(lemmatized).strip()
 
-    # 6. Filter
     if not text or text in NOT_JOB_TITLE:
         return ""
     if len(text.split()) == 1 and text not in VALID_SINGLE_WORD:
@@ -133,41 +154,55 @@ def process_job_title(text: str) -> str:
 
     return text
 
-
-def process_job_skills(text: str, max_words: int = 5) -> str:
-    """Regex + synonym + lemmatize (không cần spaCy)"""
+# ── Clean job_skills ───────────────────────────────────
+def process_job_skills(text: str, max_words: int = 4) -> str:
     if not isinstance(text, str):
         return ""
 
-    # 1. Chuẩn hóa dấu
+    whitelist = get_whitelist()
+
+    # Chuẩn hóa dấu
     text = text.replace(".", ",").replace(";", ",")
     text = re.sub(r",+", ",", text)
-
-    # 2. Lowercase + bỏ ký tự đặc biệt
     text = text.lower()
     text = re.sub(r"[^\w\s,]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # 3. Tách phrases + dedup
     phrases = list(dict.fromkeys([
         p.strip() for p in text.split(",") if p.strip()
     ]))
 
-    # 4. Xử lý từng phrase
     cleaned = []
     for phrase in phrases:
+        # Synonym
         for k, v in SYNONYM_MAP.items():
             phrase = re.sub(rf"\b{k}\b", v, phrase)
-        tokens     = [w for w in phrase.split() if w not in STOP_WORDS]
+
+        # Stopword + lemmatize
+        tokens     = [w for w in phrase.split()
+                      if w not in STOP_WORDS]
         lemmatized = [lemmatizer.lemmatize(w) for w in tokens]
-        if 0 < len(lemmatized) <= max_words:
-            cleaned.append(" ".join(lemmatized))
+
+        # Bỏ phrase quá dài hoặc rỗng
+        if len(lemmatized) == 0 or len(lemmatized) > max_words:
+            continue
+
+        skill = " ".join(lemmatized)
+
+        # Bỏ skill 1 ký tự
+        if len(skill) <= 1:
+            continue
+
+        # Filter theo whitelist (nếu có)
+        if whitelist and skill not in whitelist:
+            continue
+
+        cleaned.append(skill)
 
     return ", ".join(dict.fromkeys(cleaned)).strip(", ")
 
-
+# ── Wrapper cho multiprocessing ───────────────────────
 def process_row(row: dict) -> tuple:
-    """Wrapper cho multiprocessing"""
     return (
         process_job_title(row["job_title"]),
         process_job_skills(row["job_skills"])

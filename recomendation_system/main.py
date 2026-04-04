@@ -6,21 +6,21 @@ from dotenv import load_dotenv
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-from recommend import load_index, recommend_skills, print_recommendation
+from recommend     import load_index, recommend_skills, print_recommendation
+from roadmap       import skill_gap_roadmap, print_roadmap
+from career_switch import career_switch_analysis, print_career_switch
 
 
-# ── Nhập tay thông tin ─────────────────────────────────
-def input_manual() -> dict:
+# ── Nhập thông tin chung ───────────────────────────────
+def input_info() -> dict:
     print("\n" + "─" * 40)
 
-    # Nhập vị trí
     while True:
         job_title = input("  Nhap vi tri ung tuyen: ").strip()
         if job_title:
             break
         print("  [!] Khong duoc de trong!")
 
-    # Nhập skills
     print("  Nhap skills (cach nhau bang dau phay)")
     print("  Vi du: python, sql, machine learning")
     while True:
@@ -29,24 +29,17 @@ def input_manual() -> dict:
             break
         print("  [!] Khong duoc de trong!")
 
-    # Parse skills
-    skills = [
-        s.strip().lower()
-        for s in skills_input.split(",")
-        if s.strip()
-    ]
-
-    # Dedup
     seen   = set()
-    skills_clean = []
-    for s in skills:
+    skills = []
+    for s in skills_input.split(","):
+        s = s.strip().lower()
         if s and s not in seen:
             seen.add(s)
-            skills_clean.append(s)
+            skills.append(s)
 
     return {
         "vi_tri_ung_tuyen": job_title.lower().strip(),
-        "skills":           skills_clean
+        "skills":           skills
     }
 
 
@@ -67,50 +60,107 @@ def print_input(data: dict):
 def main():
     print("\n" + "=" * 50)
     print("  SKILL RECOMMENDER")
+    print("  powered by FAISS + Sentence Transformer")
     print("=" * 50)
 
-    # Load index 1 lần
     print("\n⏳ Khoi dong he thong...")
     index, df = load_index()
     print("✓ San sang!\n")
 
-    # Loop
     while True:
         print("\n" + "─" * 40)
-        print("  1. Goi y skills")
-        print("  2. Thoat")
-        choice = input("  Chon (1/2): ").strip()
+        print("  1. Goi y skills con thieu")
+        print("  2. Lo trinh hoc skills")
+        print("  3. Phan tich chuyen huong nghe nghiep")
+        print("  4. Thoat")
+        choice = input("  Chon (1/2/3/4): ").strip()
 
-        if choice == "2":
+        if choice == "4":
             print("  Tam biet!")
             break
 
-        if choice != "1":
-            print("  [!] Chon 1 hoac 2!")
+        if choice not in ["1", "2", "3"]:
+            print("  [!] Chon 1, 2, 3 hoac 4!")
             continue
 
-        # Nhập tay
-        data = input_manual()
-        print_input(data)
+        if choice in ["1", "2"]:
+            data = input_info()
+            print_input(data)
 
-        # Recommend
-        result = recommend_skills(
-            cv_skills  = data["skills"],
-            job_title  = data["vi_tri_ung_tuyen"],
-            index      = index,
-            df         = df,
-            top_k      = 10,
-            top_skills = 10
-        )
+            if choice == "1":
+                result = recommend_skills(
+                    cv_skills  = data["skills"],
+                    job_title  = data["vi_tri_ung_tuyen"],
+                    index      = index,
+                    df         = df,
+                    top_k      = 150,
+                    top_skills = 10
+                )
+                print_recommendation(result)
 
-        print_recommendation(result)
+            elif choice == "2":
+                result = skill_gap_roadmap(
+                    cv_skills = data["skills"],
+                    job_title = data["vi_tri_ung_tuyen"],
+                    df        = df,
+                    top_n     = 5
+                )
+                print_roadmap(result)
 
-        # Lưu kết quả
-        filename = data["vi_tri_ung_tuyen"].replace(" ", "_")
-        out = f"{filename}_recommendation.json"
-        with open(out, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        print(f"  Da luu: {out}\n")
+        elif choice == "3":
+            print("\n" + "─" * 40)
+
+            while True:
+                job_from = input(
+                    "  Vi tri hien tai: "
+                ).strip().lower()
+                if job_from:
+                    break
+                print("  [!] Khong duoc de trong!")
+
+            while True:
+                job_to = input(
+                    "  Vi tri muon chuyen sang: "
+                ).strip().lower()
+                if job_to:
+                    break
+                print("  [!] Khong duoc de trong!")
+
+            print("  Skills hien co (cach nhau bang dau phay):")
+            print("  Vi du: docker, linux, git")
+            while True:
+                skills_input = input("  Skills: ").strip()
+                if skills_input:
+                    break
+                print("  [!] Khong duoc de trong!")
+
+            seen   = set()
+            skills = []
+            for s in skills_input.split(","):
+                s = s.strip().lower()
+                if s and s not in seen:
+                    seen.add(s)
+                    skills.append(s)
+
+            LINE = "=" * 50
+            print(f"\n{LINE}")
+            print("  THONG TIN DA NHAP")
+            print(LINE)
+            print(f"  Tu   : {job_from}")
+            print(f"  Sang : {job_to}")
+            print(f"\n  Skills hien co ({len(skills)}):")
+            for s in skills:
+                print(f"    - {s}")
+            print(LINE)
+
+            result = career_switch_analysis(
+                job_from  = job_from,
+                job_to    = job_to,
+                cv_skills = skills,
+                df        = df,
+                top_n     = 20
+            )
+            print_career_switch(result)
 
 
 if __name__ == "__main__":
