@@ -12,3 +12,4 @@ airflow/logs/
 *.bin
 *.pkl
 *.json
+.vscode/

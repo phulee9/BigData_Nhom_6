@@ -8,6 +8,7 @@ from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 from dotenv import load_dotenv
 from pathlib import Path
+from skill_config import normalize_skill, is_valid_skill
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
@@ -23,81 +24,7 @@ for pkg in ["wordnet", "omw-1.4", "stopwords"]:
 lemmatizer = WordNetLemmatizer()
 STOP_WORDS  = set(stopwords.words("english"))
 
-# ── Normalize skill map ────────────────────────────────
-SKILL_NORMALIZE = {
-    # Node
-    "node.js"    : "node",
-    "nodejs"     : "node",
-    "node js"    : "node",
-    # React
-    "react.js"   : "react",
-    "reactjs"    : "react",
-    # Vue
-    "vue.js"     : "vue",
-    "vuejs"      : "vue",
-    # Next
-    "next.js"    : "next",
-    "nextjs"     : "next",
-    # Nuxt
-    "nuxt.js"    : "nuxt",
-    "nuxtjs"     : "nuxt",
-    # Express
-    "express.js" : "express",
-    "expressjs"  : "express",
-    # Angular
-    "angular.js" : "angular",
-    "angularjs"  : "angular",
-    # Nest
-    "nest.js"    : "nestjs",
-    # Jquery
-    "jquery"     : "jquery",
-    # Typescript
-    "typescript" : "typescript",
-    "ts"         : "typescript",
-    # Javascript
-    "javascript" : "javascript",
-    "js"         : "javascript",
-    # Python
-    "python3"    : "python",
-    "python 3"   : "python",
-    # Database
-    "postgresql" : "postgres",
-    "mongo"      : "mongodb",
-    "mongo db"   : "mongodb",
-    # Cloud
-    "amazon web services": "aws",
-    "google cloud"       : "gcp",
-    "microsoft azure"    : "azure",
-    # REST
-    "rest api"   : "restful apis",
-    "rest apis"  : "restful apis",
-    "restful"    : "restful apis",
-    # CI/CD
-    "ci/cd"      : "cicd",
-    "ci cd"      : "cicd",
-    # Machine Learning
-    "machine learning": "machine learning",
-    "ml"              : "machine learning",
-    # Deep Learning
-    "deep learning"   : "deep learning",
-    "dl"              : "deep learning",
-}
-
-def normalize_skill(skill: str) -> str:
-    """Normalize skill về dạng chuẩn"""
-    s = skill.lower().strip()
-    # Thử map trực tiếp
-    if s in SKILL_NORMALIZE:
-        return SKILL_NORMALIZE[s]
-    # Thử bỏ dấu chấm rồi map
-    s_no_dot = s.replace(".", "")
-    if s_no_dot in SKILL_NORMALIZE:
-        return SKILL_NORMALIZE[s_no_dot]
-    return s
-
-# ── Clean query ────────────────────────────────────────
 def clean_query(text: str) -> str:
-    """Clean nhẹ cho query khi recommend"""
     if not isinstance(text, str):
         return ""
     text   = text.lower()
@@ -111,7 +38,7 @@ print("⏳ Load Sentence Transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
 print("✓ Model ready!")
 
-# ── Load FAISS index + metadata ────────────────────────
+# ── Load FAISS ─────────────────────────────────────────
 def load_index():
     if not (BASE_DIR / "faiss_index.bin").exists():
         raise FileNotFoundError(
@@ -125,19 +52,15 @@ def load_index():
     print(f"✓ {index.ntotal:,} vectors | {len(df):,} jobs")
     return index, df
 
-# ── Content-Based Filtering + Semantic Search ──────────
+# ── Recommend ──────────────────────────────────────────
 def recommend_skills(
     cv_skills:  list,
     job_title:  str,
     index,
     df:         pd.DataFrame,
-    top_k:      int = 10,
+    top_k:      int = 150,
     top_skills: int = 10
 ) -> dict:
-    """
-    Bước 1: Semantic Search tìm job_title gần nhất
-    Bước 2: Content-Based Filtering lấy skills còn thiếu
-    """
 
     # Normalize CV skills
     cv_skills_clean = [
@@ -145,19 +68,18 @@ def recommend_skills(
         for s in cv_skills
     ]
 
-    # ── Bước 1: Semantic Search ────────────────────────
+    # Bước 1: Semantic Search
     title_clean  = clean_query(job_title)
     title_vector = model.encode(
-        [title_clean],
-        normalize_embeddings=True
+        [title_clean], normalize_embeddings=True
     ).astype("float32")
 
-    scores, indices = index.search(title_vector, k=top_k * 3)
+    scores, indices = index.search(title_vector, k=top_k)
     candidate_jobs  = df.iloc[indices[0]].copy()
     candidate_jobs["score"] = scores[0]
     total_candidates = len(candidate_jobs)
 
-    # ── Bước 2: Content-Based Filtering ───────────────
+    # Bước 2: Content-Based Filtering
     user_skills_set = set(cv_skills_clean)
     missing = []
 
@@ -165,11 +87,10 @@ def recommend_skills(
         job_skills = set(
             normalize_skill(s)
             for s in row["job_skills"].lower().split(", ")
-            if s.strip()
+            if s.strip() and is_valid_skill(normalize_skill(s.strip()))
         )
         missing += list(job_skills - user_skills_set)
 
-    # Đếm tần suất
     skill_counts = Counter(missing).most_common(top_skills)
 
     return {
@@ -188,7 +109,7 @@ def recommend_skills(
 # ── In kết quả ─────────────────────────────────────────
 def print_recommendation(result: dict):
     LINE  = "=" * 50
-    total = result.get("total_candidates", 100)
+    total = result.get("total_candidates", 150)
 
     print(f"\n{LINE}")
     print("  KET QUA GOI Y SKILLS")
@@ -208,8 +129,6 @@ def print_recommendation(result: dict):
 
     print(f"\n  Skills nen hoc them:")
     for i, item in enumerate(result["skills_goi_y"], 1):
-        print(
-            f"    {i}. {item['skill']}"
-            f" (xuat hien trong {item['count']}/{total} job tuong tu)"
-        )
+        print(f"    {i}. {item['skill']}"
+              f" (xuat hien trong {item['count']}/{total} job tuong tu)")
     print(LINE)
