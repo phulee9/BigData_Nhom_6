@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import Path
 from skill_config import is_valid_skill
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR  = Path(__file__).parent
 
 def load_metadata() -> pd.DataFrame:
     with open(BASE_DIR / "job_metadata.pkl", "rb") as f:

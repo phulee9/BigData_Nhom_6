@@ -12,7 +12,9 @@ from skill_config import normalize_skill, is_valid_skill
 
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
-BASE_DIR = Path(__file__).parent
+BASE_DIR   = Path(__file__).parent
+INDEX_FILE = BASE_DIR / "faiss_index.bin"
+META_FILE  = BASE_DIR / "job_metadata.pkl"
 
 # ── Setup NLP ──────────────────────────────────────────
 for pkg in ["wordnet", "omw-1.4", "stopwords"]:
@@ -40,14 +42,17 @@ print("✓ Model ready!")
 
 # ── Load FAISS ─────────────────────────────────────────
 def load_index():
-    if not (BASE_DIR / "faiss_index.bin").exists():
+    if not INDEX_FILE.exists():
         raise FileNotFoundError(
-            "\n[LOI] Chua co FAISS index!"
-            "\nChay: python spark_etl/silver_to_gold.py"
+            f"\n[LOI] Khong tim thay: {INDEX_FILE}"
+        )
+    if not META_FILE.exists():
+        raise FileNotFoundError(
+            f"\n[LOI] Khong tim thay: {META_FILE}"
         )
     print("⏳ Load FAISS index...")
-    index = faiss.read_index(str(BASE_DIR / "faiss_index.bin"))
-    with open(BASE_DIR / "job_metadata.pkl", "rb") as f:
+    index = faiss.read_index(str(INDEX_FILE))
+    with open(META_FILE, "rb") as f:
         df = pickle.load(f)
     print(f"✓ {index.ntotal:,} vectors | {len(df):,} jobs")
     return index, df
@@ -68,18 +73,49 @@ def recommend_skills(
         for s in cv_skills
     ]
 
-    # Bước 1: Semantic Search
-    title_clean  = clean_query(job_title)
+    # ── Bước 1: Encode query = job_title + cv_skills ──
+    # Giống format index: title_skills = job_title + job_skills
+    query       = job_title + " " + " ".join(cv_skills_clean)
+    query_clean = clean_query(query)
+
     title_vector = model.encode(
-        [title_clean], normalize_embeddings=True
+        [query_clean], normalize_embeddings=True
     ).astype("float32")
 
-    scores, indices = index.search(title_vector, k=top_k)
-    candidate_jobs  = df.iloc[indices[0]].copy()
+    # ── Bước 2: FAISS search 812K → top 200 ───────────
+    scores, indices = index.search(title_vector, k=200)
+
+    candidate_jobs          = df.iloc[indices[0]].copy()
     candidate_jobs["score"] = scores[0]
+
+    # ── Bước 3: Filter theo title trong 200 jobs ──────
+    keywords = [
+        w for w in job_title.lower().split()
+        if len(w) > 2
+    ]
+
+    if keywords:
+        pattern  = "|".join(keywords)
+        mask     = candidate_jobs["job_title"].str.contains(
+            pattern, case=False, na=False
+        )
+        filtered = candidate_jobs[mask]
+    else:
+        filtered = candidate_jobs
+
+    # Nếu filter quá ít → dùng toàn bộ 200
+    if len(filtered) < 30:
+        print(f"  [!] Chi co {len(filtered)} jobs sau filter"
+              f", dung toan bo 200 jobs")
+        filtered = candidate_jobs
+
+    # Lấy top_k
+    candidate_jobs   = filtered.head(top_k)
     total_candidates = len(candidate_jobs)
 
-    # Bước 2: Content-Based Filtering
+    print(f"  Jobs sau filter: {total_candidates}")
+
+    # ── Bước 4: Content-Based Filtering ───────────────
     user_skills_set = set(cv_skills_clean)
     missing = []
 
@@ -97,7 +133,8 @@ def recommend_skills(
         "vi_tri_ung_tuyen":    job_title,
         "job_titles_gan_nhat": candidate_jobs["job_title"] \
                                              .unique()[:3].tolist(),
-        "top_scores":          scores[0][:3].tolist(),
+        "top_scores":          candidate_jobs["score"] \
+                                             .head(3).tolist(),
         "skills_da_co":        cv_skills_clean,
         "total_candidates":    total_candidates,
         "skills_goi_y": [
