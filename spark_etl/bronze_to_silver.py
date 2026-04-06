@@ -23,12 +23,12 @@ if __name__ == "__main__":
     # Kiểm tra whitelist
     whitelist = get_whitelist()
     if not whitelist:
-        print("⚠ Chưa có whitelist!")
+        print("Chưa có whitelist!")
         print("  Chạy trước: python spark_etl/build_skill_whitelist.py")
         exit(1)
 
     # ── Đọc Kaggle ────────────────────────────────────
-    print("⏳ [1/5] Đọc Kaggle từ Bronze...")
+    print("[1/5] Đọc Kaggle từ Bronze...")
     df_meta   = pd.read_csv(
         client.get_object(BUCKET,
         "bronze/kaggle/linkedin_job_postings.csv")
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     print(f"✓ Kaggle: {len(df_kaggle):,} rows")
 
     # ── Đọc Monster ───────────────────────────────────
-    print("⏳ [2/5] Đọc Monster từ Bronze...")
+    print("[2/5] Đọc Monster từ Bronze...")
     objs  = list(client.list_objects(
         BUCKET, prefix="bronze/crawled/", recursive=True
     ))
@@ -91,14 +91,14 @@ if __name__ == "__main__":
     print(f"✓ Monster: {len(df_monster):,} rows")
 
     # ── Gộp 2 nguồn ───────────────────────────────────
-    print("⏳ [3/5] Gộp 2 nguồn...")
+    print("[3/5] Gộp 2 nguồn...")
     df_all = pd.concat(
         [df_kaggle, df_monster], ignore_index=True
     ).dropna(subset=["job_title", "job_skills"])
     print(f"✓ Tổng: {len(df_all):,} rows")
 
     # ── Clean text ────────────────────────────────────
-    print(f"⏳ [4/5] Clean text ({cpu_count()} cores)...")
+    print(f" [4/5] Clean text ({cpu_count()} cores)...")
     print("  job_title  → spaCy NER + synonym + lemmatize")
     print("  job_skills → whitelist filter + lemmatize")
 
@@ -120,11 +120,11 @@ if __name__ == "__main__":
         subset=["job_title", "job_skills"]
     ).reset_index(drop=True)
 
-    print(f"✓ Sau clean        : {len(df_all):,} rows")
-    print(f"✓ Unique job_title : {df_all['job_title'].nunique():,}")
+    print(f"Sau clean        : {len(df_all):,} rows")
+    print(f"Unique job_title : {df_all['job_title'].nunique():,}")
 
     # ── Lưu Silver ────────────────────────────────────
-    print("⏳ [5/5] Lưu Silver lên MinIO...")
+    print("[5/5] Lưu Silver lên MinIO...")
     csv_bytes = df_all.to_csv(index=False).encode("utf-8")
     client.put_object(
         bucket_name=BUCKET,
@@ -133,7 +133,7 @@ if __name__ == "__main__":
         length=len(csv_bytes),
         content_type="application/csv"
     )
-    print("✓ Silver xong!")
+    print("Silver xong!")
     print(f"  Shape  : {df_all.shape}")
     print(f"  Columns: {df_all.columns.tolist()}")
     print("  Tiep theo: python spark_etl/silver_to_gold.py")

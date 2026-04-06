@@ -30,12 +30,12 @@ if __name__ == "__main__":
     # Kiểm tra whitelist
     whitelist = get_whitelist()
     if not whitelist:
-        print("⚠ Chưa có whitelist!")
+        print("Chưa có whitelist!")
         print("  Chạy: python spark_etl/build_skill_whitelist.py")
         exit(1)
 
     # ── Kiểm tra crawl mới ────────────────────────────
-    print(f"⏳ [1/5] Kiểm tra crawl {TODAY}...")
+    print(f"[1/5] Kiểm tra crawl {TODAY}...")
     objs = list(client.list_objects(
         BUCKET,
         prefix=f"bronze/crawled/{TODAY}/",
@@ -46,7 +46,7 @@ if __name__ == "__main__":
         exit(0)
 
     # ── Đọc crawl mới ────────────────────────────────
-    print(f"⏳ [2/5] Đọc {len(objs)} file crawl...")
+    print(f"[2/5] Đọc {len(objs)} file crawl...")
     monster_list = []
     for o in objs:
         if o.object_name.endswith(".json"):
@@ -79,23 +79,23 @@ if __name__ == "__main__":
                if rows_new else pd.DataFrame()
 
     if df_new.empty:
-        print("⚠ Không có job hợp lệ")
+        print("Không có job hợp lệ")
         exit(0)
 
-    print(f"✓ Crawl mới: {len(df_new):,} jobs")
+    print(f" Crawl mới: {len(df_new):,} jobs")
 
     # ── Đọc Silver hiện có ───────────────────────────
-    print("⏳ [3/5] Kiểm tra duplicate với Silver...")
+    print("[3/5] Kiểm tra duplicate với Silver...")
     df_existing = pd.read_csv(
         client.get_object(BUCKET, "silver/Silver_Jobs_Cleaned.csv")
     )
     existing_pairs = set(
         zip(df_existing["job_title"], df_existing["job_skills"])
     )
-    print(f"✓ Silver hiện có: {len(df_existing):,} rows")
+    print(f"Silver hiện có: {len(df_existing):,} rows")
 
     # ── Clean jobs mới ────────────────────────────────
-    print(f"⏳ [4/5] Clean {len(df_new):,} jobs mới...")
+    print(f"[4/5] Clean {len(df_new):,} jobs mới...")
     rows = df_new[["job_title", "job_skills"]].to_dict("records")
     with Pool(cpu_count()) as p:
         results = p.map(process_row, rows)
@@ -120,13 +120,13 @@ if __name__ == "__main__":
     ].reset_index(drop=True)
 
     if df_new.empty:
-        print("⚠ Tất cả job mới đã có trong Silver!")
+        print("Tất cả job mới đã có trong Silver!")
         exit(0)
 
-    print(f"✓ Jobs mới thực sự: {len(df_new):,}")
+    print(f"Jobs mới thực sự: {len(df_new):,}")
 
     # ── Encode + update FAISS ─────────────────────────
-    print("⏳ [5/5] Encode + update FAISS...")
+    print("[5/5] Encode + update FAISS...")
     model   = SentenceTransformer("all-MiniLM-L6-v2")
     new_emb = model.encode(
         df_new["title_skills"].tolist(),
@@ -157,7 +157,7 @@ if __name__ == "__main__":
     with open(BASE_DIR / "job_metadata.pkl", "wb") as f:
         pickle.dump(df_updated, f)
 
-    print("✓ Update xong!")
+    print("Update xong!")
     print(f"  Thêm mới : {len(df_new):,} jobs")
     print(f"  Tổng     : {len(df_updated):,} jobs")
     print(f"  FAISS    : {old:,} → {index.ntotal:,} vectors")

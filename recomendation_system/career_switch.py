@@ -134,7 +134,7 @@ def print_career_switch(result: dict):
         for s, pct in result["cv_match"]:
             print(f"    v {s} ({pct}% jobs yeu cau)")
     else:
-        print("    → Chua co skills nao phu hop!")
+        print("    Chua co skills nao phu hop!")
 
     print(f"\n  Skills chung cua ca 2 vi tri:")
     for s, pct in result["common_skills"][:5]:
@@ -149,6 +149,6 @@ def print_career_switch(result: dict):
         for i, (s, pct) in enumerate(result["need_to_learn"], 1):
             print(f"    {i}. {s} ({pct}% jobs yeu cau)")
     else:
-        print("    → Ban da co du skills!")
+        print("    Ban da co du skills!")
 
     print(LINE)

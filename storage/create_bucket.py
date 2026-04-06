@@ -16,6 +16,6 @@ BUCKET = os.getenv("MINIO_BUCKET")
 
 if not client.bucket_exists(BUCKET):
     client.make_bucket(BUCKET)
-    print(f"✓ Tạo bucket: {BUCKET}")
+    print(f"Tạo bucket: {BUCKET}")
 else:
-    print(f"✓ Bucket đã tồn tại: {BUCKET}")
+    print(f"Bucket đã tồn tại: {BUCKET}")

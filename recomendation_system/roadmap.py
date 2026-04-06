@@ -122,7 +122,7 @@ def print_roadmap(result: dict):
             print(f"    {i}. {item['skill']}"
                   f" ({item['pct']}% jobs yeu cau)")
     else:
-        print("    → Da co du skills bat buoc!")
+        print("     Da co du skills bat buoc!")
 
     print(f"\n  BUOC 2 — SHOULD HAVE (nen co):")
     if result["should_have"]:
@@ -130,7 +130,7 @@ def print_roadmap(result: dict):
             print(f"    {i}. {item['skill']}"
                   f" ({item['pct']}% jobs yeu cau)")
     else:
-        print("    → Khong co skills can bo sung!")
+        print("     Khong co skills can bo sung!")
 
     print(f"\n  BUOC 3 — NICE TO HAVE (them diem):")
     if result["nice_have"]:
@@ -138,6 +138,6 @@ def print_roadmap(result: dict):
             print(f"    {i}. {item['skill']}"
                   f" ({item['pct']}% jobs yeu cau)")
     else:
-        print("    → Khong co!")
+        print("     Khong co!")
 
     print(LINE)

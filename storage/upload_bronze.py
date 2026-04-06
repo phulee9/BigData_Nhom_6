@@ -18,24 +18,24 @@ def push_kaggle(local_path: str, filename: str):
     path = f"bronze/kaggle/{filename}"
     try:
         client.stat_object(BUCKET, path)
-        print(f"⚠ Đã tồn tại, bỏ qua: {path}")
+        print(f"Đã tồn tại, bỏ qua: {path}")
         return
     except:
         pass
     client.fput_object(BUCKET, path, local_path)
-    print(f"✓ Bronze Kaggle: {path}")
+    print(f"Bronze Kaggle: {path}")
 
 def push_crawl(local_path: str, filename: str):
     date = datetime.now().strftime("%Y-%m-%d")
     path = f"bronze/crawled/{date}/{filename}"
     try:
         client.stat_object(BUCKET, path)
-        print(f"⚠ Hôm nay đã upload: {path}")
+        print(f"Hôm nay đã upload: {path}")
         return
     except:
         pass
     client.fput_object(BUCKET, path, local_path)
-    print(f"✓ Bronze Crawl: {path}")
+    print(f"Bronze Crawl: {path}")
 
 if __name__ == "__main__":
     # Kaggle — chỉ upload lần đầu
@@ -49,4 +49,4 @@ if __name__ == "__main__":
     if os.path.exists(crawl):
         push_crawl(crawl, "monster_jobs_chunk_1.json")
     else:
-        print("⚠ Không có crawl data hôm nay")
+        print("Không có crawl data hôm nay")

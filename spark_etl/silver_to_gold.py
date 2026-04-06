@@ -21,16 +21,16 @@ client = Minio(
 BUCKET = os.getenv("MINIO_BUCKET")
 
 # ── Đọc Silver ─────────────────────────────────────────
-print("⏳ [1/3] Đọc Silver từ MinIO...")
+print(" [1/3] Đọc Silver từ MinIO...")
 df = pd.read_csv(
     client.get_object(BUCKET, "silver/Silver_Jobs_Cleaned.csv")
 ).dropna(subset=["job_title", "job_skills", "title_skills"])
 
-print(f"✓ {len(df):,} jobs")
-print(f"✓ Unique job_title: {df['job_title'].nunique():,}")
+print(f"{len(df):,} jobs")
+print(f"Unique job_title: {df['job_title'].nunique():,}")
 
 # ── Encode ─────────────────────────────────────────────
-print("⏳ [2/3] Encode embeddings (CPU ~75-90 phút)...")
+print("[2/3] Encode embeddings (CPU ~75-90 phút)...")
 model    = SentenceTransformer("all-MiniLM-L6-v2")
 texts    = df["title_skills"].tolist()
 EMB_FILE = BASE_DIR / "embeddings.npy"
@@ -46,10 +46,10 @@ with open(EMB_FILE, "wb") as f:
         ).astype("float32")
         np.save(f, emb)
 
-print(f"✓ Embeddings: {EMB_FILE}")
+print(f"Embeddings: {EMB_FILE}")
 
 # ── Build FAISS ─────────────────────────────────────────
-print("⏳ [3/3] Build FAISS index...")
+print("[3/3] Build FAISS index...")
 index = faiss.IndexFlatIP(384)
 with open(EMB_FILE, "rb") as f:
     while True:
@@ -58,14 +58,14 @@ with open(EMB_FILE, "rb") as f:
         except (ValueError, EOFError):
             break
 
-print(f"✓ FAISS: {index.ntotal:,} vectors")
+print(f"FAISS: {index.ntotal:,} vectors")
 
 # ── Lưu ───────────────────────────────────────────────
 faiss.write_index(index, str(BASE_DIR / "faiss_index.bin"))
 with open(BASE_DIR / "job_metadata.pkl", "wb") as f:
     pickle.dump(df, f)
 
-print("✓ Gold xong!")
+print(" Gold xong!")
 print(f"  faiss_index.bin  : {(BASE_DIR/'faiss_index.bin').stat().st_size/1e6:.1f} MB")
 print(f"  job_metadata.pkl : {(BASE_DIR/'job_metadata.pkl').stat().st_size/1e6:.1f} MB")
 print("  Tiếp theo: python recomendation_system/main.py")

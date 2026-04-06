@@ -36,9 +36,9 @@ def clean_query(text: str) -> str:
     return " ".join(lemmatizer.lemmatize(w) for w in tokens)
 
 # ── Load model ─────────────────────────────────────────
-print("⏳ Load Sentence Transformer...")
+print("Load Sentence Transformer...")
 model = SentenceTransformer("all-MiniLM-L6-v2")
-print("✓ Model ready!")
+print("Model ready!")
 
 # ── Load FAISS ─────────────────────────────────────────
 def load_index():
@@ -50,11 +50,11 @@ def load_index():
         raise FileNotFoundError(
             f"\n[LOI] Khong tim thay: {META_FILE}"
         )
-    print("⏳ Load FAISS index...")
+    print("Load FAISS index...")
     index = faiss.read_index(str(INDEX_FILE))
     with open(META_FILE, "rb") as f:
         df = pickle.load(f)
-    print(f"✓ {index.ntotal:,} vectors | {len(df):,} jobs")
+    print(f" {index.ntotal:,} vectors | {len(df):,} jobs")
     return index, df
 
 # ── Recommend ──────────────────────────────────────────
