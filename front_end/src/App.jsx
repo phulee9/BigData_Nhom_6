@@ -21,11 +21,14 @@ export default function CVAnalyzerApp() {
             inputMode={cv.inputMode}
             setInputMode={cv.setInputMode}
             uploadedFile={cv.uploadedFile}
-            manualInput={cv.manualInput}
-            setManualInput={cv.setManualInput}
+            jobTitle={cv.jobTitle}
+            setJobTitle={cv.setJobTitle}
+            skillsInput={cv.skillsInput}
+            setSkillsInput={cv.setSkillsInput}
             handleFileUpload={cv.handleFileUpload}
             handleAnalyzeClick={cv.handleAnalyzeClick}
             isLoading={cv.isLoading}
+            error={cv.error}
           />
         )}
 
@@ -48,16 +51,18 @@ export default function CVAnalyzerApp() {
         )}
 
         {/* STEP 4: Display Results */}
-        {cv.currentStep === 'result' && cv.resultData && (
+        {cv.currentStep === 'result' && cv.cvData && (
           <ResultStep
             resultData={cv.resultData}
             selectedOption={cv.selectedOption}
+            cvData={cv.cvData}
             onBack={() => cv.setCurrentStep('options')}
             onSelectOtherAnalysis={() => {
               cv.setSelectedOption(null);
               cv.setCurrentStep('options');
             }}
             onAnalyzeNewCV={cv.resetToUpload}
+            onCareerAnalysis={cv.handleCareerAnalysis}
           />
         )}
       </div>
