@@ -1,44 +1,36 @@
-import re, json, nltk
+import re
+import json
+import nltk
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 from pathlib import Path
 
+# Setup NLTK
 for pkg in ["wordnet", "omw-1.4", "stopwords"]:
     try:
         nltk.data.find(f"corpora/{pkg}")
-    except:
+    except Exception:
         nltk.download(pkg, quiet=True)
 
 lemmatizer = WordNetLemmatizer()
-STOP_WORDS  = set(stopwords.words("english"))
+STOP_WORDS = set(stopwords.words("english"))
 
-# ── Load whitelist ─────────────────────────────────────
-_WHITELIST = None
+# Đường dẫn whitelist
+WHITELIST_PATH = Path(__file__).parent.parent / "recommendation" / "data" / "skill_whitelist.json"
 
-def get_whitelist() -> set:
-    global _WHITELIST
-    if _WHITELIST is None:
-        wl_path = Path(__file__).parent.parent / \
-                  "recomendation_system" / "skill_whitelist.json"
-        if wl_path.exists():
-            with open(wl_path, "r", encoding="utf-8") as f:
-                _WHITELIST = set(json.load(f))
-            print(f"✓ Loaded whitelist: {len(_WHITELIST):,} skills")
-        else:
-            _WHITELIST = set()
-            print("⚠ Không có whitelist, bỏ qua filter")
-    return _WHITELIST
-
-# ── Synonym Map ────────────────────────────────────────
+# Bảng synonym chuẩn hóa job_title và job_skills
 SYNONYM_MAP = {
+    # Cấp bậc
     "sr": "senior", "jr": "junior", "mid": "mid",
     "lead": "senior", "principal": "senior",
     "intern": "intern", "trainee": "junior",
+    # Chức danh
     "mgr": "manager", "mngr": "manager",
     "dir": "director", "vp": "vice president",
     "assoc": "associate", "asst": "assistant",
     "rep": "representative", "exec": "executive",
     "admin": "administrator",
+    # Kỹ thuật
     "dev": "developer", "eng": "engineer",
     "swe": "software engineer",
     "frontend": "front end", "backend": "back end",
@@ -48,9 +40,11 @@ SYNONYM_MAP = {
     "ai": "artificial intelligence",
     "ds": "data scientist", "de": "data engineer",
     "fe": "front end", "be": "back end",
+    # Kinh doanh
     "bi": "business intelligence",
     "biz": "business", "bd": "business development",
     "ba": "business analyst", "pm": "project manager",
+    # Khác
     "hr": "human resources",
     "cs": "customer service",
     "ae": "account executive",
@@ -69,6 +63,7 @@ SYNONYM_MAP = {
     "pt": "part time", "ft": "full time",
 }
 
+# Patterns loại bỏ noise trong job_title
 NOISE_PATTERNS = [
     r'\b(remote|hybrid|onsite|on.site)\b',
     r'\b(part.time|full.time|contract|temp|temporary)\b',
@@ -99,7 +94,24 @@ VALID_SINGLE_WORD = {
     "attorney", "lawyer", "doctor", "pharmacist",
 }
 
-# ── Lazy load spaCy ───────────────────────────────────
+
+# Lazy load whitelist
+_WHITELIST = None
+
+def get_whitelist() -> set:
+    global _WHITELIST
+    if _WHITELIST is None:
+        if WHITELIST_PATH.exists():
+            with open(WHITELIST_PATH, "r", encoding="utf-8") as f:
+                _WHITELIST = set(json.load(f))
+            print(f"Loaded whitelist: {len(_WHITELIST):,} skills")
+        else:
+            _WHITELIST = set()
+            print("Khong co whitelist, bo qua filter")
+    return _WHITELIST
+
+
+# Lazy load spaCy
 _nlp = None
 
 def get_nlp():
@@ -114,12 +126,12 @@ def get_nlp():
             _nlp = spacy.load("en_core_web_sm")
     return _nlp
 
-# ── Clean job_title ────────────────────────────────────
+
 def process_job_title(text: str) -> str:
     if not isinstance(text, str):
         return ""
 
-    # spaCy NER
+    # Dùng spaCy NER loại bỏ tên tổ chức, địa điểm
     nlp = get_nlp()
     doc = nlp(text.strip())
     remove_spans = [
@@ -130,22 +142,21 @@ def process_job_title(text: str) -> str:
     for start, end in sorted(remove_spans, reverse=True):
         text = text[:start] + " " + text[end:]
 
-    # Lowercase + noise
+    # Lowercase và loại bỏ noise patterns
     text = text.lower()
     for pattern in NOISE_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
     text = re.sub(r"[^\w\s]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+",     " ", text).strip()
 
-    # Synonym
+    # Chuẩn hóa synonym
     for k, v in SYNONYM_MAP.items():
         text = re.sub(rf"\b{k}\b", v, text)
 
-    # Stopword + lemmatize
-    tokens     = [w for w in text.split() if w not in STOP_WORDS]
-    lemmatized = [lemmatizer.lemmatize(w) for w in tokens]
-    text       = " ".join(lemmatized).strip()
+    # Bỏ stopwords và lemmatize
+    tokens = [w for w in text.split() if w not in STOP_WORDS]
+    text   = " ".join(lemmatizer.lemmatize(w) for w in tokens).strip()
 
     if not text or text in NOT_JOB_TITLE:
         return ""
@@ -154,46 +165,43 @@ def process_job_title(text: str) -> str:
 
     return text
 
-# ── Clean job_skills ───────────────────────────────────
+
 def process_job_skills(text: str, max_words: int = 4) -> str:
     if not isinstance(text, str):
         return ""
 
     whitelist = get_whitelist()
 
-    # Chuẩn hóa dấu
+    # Chuẩn hóa dấu phân cách
     text = text.replace(".", ",").replace(";", ",")
     text = re.sub(r",+", ",", text)
     text = text.lower()
     text = re.sub(r"[^\w\s,]", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s+",      " ", text).strip()
 
-    phrases = list(dict.fromkeys([
-        p.strip() for p in text.split(",") if p.strip()
-    ]))
+    # Tách thành phrases và dedup
+    phrases = list(dict.fromkeys([p.strip() for p in text.split(",") if p.strip()]))
 
     cleaned = []
     for phrase in phrases:
-        # Synonym
+        # Chuẩn hóa synonym
         for k, v in SYNONYM_MAP.items():
             phrase = re.sub(rf"\b{k}\b", v, phrase)
 
-        # Stopword + lemmatize
-        tokens     = [w for w in phrase.split()
-                      if w not in STOP_WORDS]
+        # Bỏ stopwords và lemmatize
+        tokens = [w for w in phrase.split() if w not in STOP_WORDS]
         lemmatized = [lemmatizer.lemmatize(w) for w in tokens]
 
-        # Bỏ phrase quá dài hoặc rỗng
-        if len(lemmatized) == 0 or len(lemmatized) > max_words:
+        # Bỏ phrase rỗng hoặc quá dài
+        if not lemmatized or len(lemmatized) > max_words:
             continue
 
         skill = " ".join(lemmatized)
 
-        # Bỏ skill 1 ký tự
         if len(skill) <= 1:
             continue
 
-        # Filter theo whitelist (nếu có)
+        # Filter theo whitelist nếu có
         if whitelist and skill not in whitelist:
             continue
 
@@ -201,8 +209,9 @@ def process_job_skills(text: str, max_words: int = 4) -> str:
 
     return ", ".join(dict.fromkeys(cleaned)).strip(", ")
 
-# ── Wrapper cho multiprocessing ───────────────────────
+
 def process_row(row: dict) -> tuple:
+    # Wrapper cho multiprocessing
     return (
         process_job_title(row["job_title"]),
         process_job_skills(row["job_skills"])
