@@ -9,3 +9,10 @@ yarn-error.log*
 .env.local
 .cache
 .vite
+
+# UI/UX Pro Max (không cần push lên github)
+.github/prompts/ui-ux-pro-max/
+
+# Documentation (local only)
+DESIGN_GUIDE.md
+DESIGN_SYSTEM.md

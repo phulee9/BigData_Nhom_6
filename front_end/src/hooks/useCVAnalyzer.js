@@ -58,6 +58,9 @@ export const useCVAnalyzer = () => {
       let data;
       if (source === 'upload') {
         data = await uploadCVFile(uploadedFile);
+        // File upload: go to review/analyze step
+        setCvData(data);
+        setCurrentStep('analyze');
       } else {
         // Parse skills: split by comma and clean
         const skills = skillsInput
@@ -66,10 +69,10 @@ export const useCVAnalyzer = () => {
           .filter((s) => s.length > 0);
 
         data = await submitManualInfo(jobTitle.trim(), skills);
+        // Manual input: go directly to options step
+        setCvData(data);
+        setCurrentStep('options');
       }
-
-      setCvData(data);
-      setCurrentStep('analyze');
     } catch (err) {
       setError(err.message || 'Lỗi phân tích CV');
       console.error('CV Analysis error:', err);
