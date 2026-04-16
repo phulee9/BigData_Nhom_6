@@ -9,7 +9,7 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 sys.path.append(str(Path(__file__).parent / "core"))
 sys.path.append(str(Path(__file__).parent / "cv"))
 
-from loader        import load_index
+from loader        import load_all_indexes
 from recommend     import recommend_skills
 from roadmap       import skill_gap_roadmap
 from career_switch import career_switch_analysis
@@ -17,7 +17,7 @@ from cv_extractor  import read_pdf, extract_cv, dedup_skills
 
 
 def input_block(tab_key: str):
-    # Trả về (job_title, skills) từ upload CV hoặc nhập tay
+    # Tra ve (job_title, skills) tu upload CV hoac nhap tay
     input_type = st.radio(
         "Chon cach nhap:",
         ["📄 Upload CV (PDF)", "✏️ Nhap tay"],
@@ -85,20 +85,23 @@ def input_block(tab_key: str):
     return job_title, skills
 
 
-# Cấu hình trang
+# Cau hinh trang
 st.set_page_config(page_title="Skill Recommender", page_icon="🎯", layout="centered")
 st.title("🎯 Skill Recommender")
 st.caption("He thong goi y ky nang dua tren 812,102 tin tuyen dung")
 
-# Load index 1 lần duy nhất khi khởi động
+
+# Load ca 2 index 1 lan duy nhat khi khoi dong
 @st.cache_resource
-def get_index():
-    return load_index()
+def get_indexes():
+    return load_all_indexes()
 
 with st.spinner("Dang khoi dong he thong..."):
-    index, df = get_index()
+    index_old, df_old, index_new, df_new = get_indexes()
 
-st.success(f"San sang! {index.ntotal:,} jobs trong he thong")
+# Hien thi so luong jobs tu ca 2 nguon
+total_jobs = index_old.ntotal + (index_new.ntotal if index_new else 0)
+st.success(f"San sang! {total_jobs:,} jobs trong he thong")
 st.divider()
 
 tab1, tab2, tab3 = st.tabs(["🔍 Goi y skills", "📚 Lo trinh hoc", "🔄 Chuyen huong nghe"])
@@ -119,21 +122,27 @@ with tab1:
                 result = recommend_skills(
                     cv_skills  = skills_1,
                     job_title  = job_title_1,
-                    index      = index,
-                    df         = df,
+                    index_old  = index_old,
+                    df_old     = df_old,
+                    index_new  = index_new,
+                    df_new     = df_new,
                     top_k      = 150,
                     top_skills = 10
                 )
 
             st.divider()
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Jobs phan tich", result["total_candidates"])
+                st.metric("Jobs cu", result["total_old"])
             with col2:
+                st.metric("Jobs moi", result["total_new"])
+            with col3:
                 st.metric("Skills goi y", len(result["skills_goi_y"]))
 
             st.subheader("📌 Job titles gan nhat")
-            for i, (t, s) in enumerate(zip(result["job_titles_gan_nhat"], result["top_scores"]), 1):
+            for i, (t, s) in enumerate(
+                zip(result["job_titles_gan_nhat"], result["top_scores"]), 1
+            ):
                 st.write(f"{i}. **{t}** (do tuong dong: {s:.2f})")
 
             col1, col2 = st.columns(2)
@@ -143,11 +152,9 @@ with tab1:
                     st.write(f"• {s}")
             with col2:
                 st.subheader("📈 Skills nen hoc them")
-                total = result["total_candidates"]
                 for i, item in enumerate(result["skills_goi_y"], 1):
-                    pct = round(item["count"] / total * 100)
-                    st.write(f"{i}. **{item['skill']}** — {pct}% jobs")
-                    st.progress(pct / 100)
+                    st.write(f"{i}. **{item['skill']}** — score: {item['score']}")
+                    st.progress(min(item["score"], 1.0))
 
 
 with tab2:
@@ -165,7 +172,10 @@ with tab2:
                 result = skill_gap_roadmap(
                     cv_skills = skills_2,
                     job_title = job_title_2,
-                    df        = df,
+                    df_old        = df_old,
+                    index_old = index_old,
+                    index_new = index_new,  # ← thêm
+                    df_new    = df_new, 
                     top_n     = 5
                 )
 
@@ -228,7 +238,7 @@ with tab3:
                     job_from  = job_from,
                     job_to    = job_to.lower().strip(),
                     cv_skills = skills_3,
-                    df        = df,
+                    df        = df_old,
                     top_n     = 20
                 )
 

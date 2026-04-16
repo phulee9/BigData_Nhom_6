@@ -4,6 +4,7 @@ import nltk
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 from pathlib import Path
+from skill_config import normalize_skill
 
 # Setup NLTK
 for pkg in ["wordnet", "omw-1.4", "stopwords"]:
@@ -15,22 +16,20 @@ for pkg in ["wordnet", "omw-1.4", "stopwords"]:
 lemmatizer = WordNetLemmatizer()
 STOP_WORDS = set(stopwords.words("english"))
 
-# Đường dẫn whitelist
 WHITELIST_PATH = Path(__file__).parent.parent / "recommendation" / "data" / "skill_whitelist.json"
 
-# Bảng synonym chuẩn hóa job_title và job_skills
 SYNONYM_MAP = {
-    # Cấp bậc
+    # Cap bac
     "sr": "senior", "jr": "junior", "mid": "mid",
     "lead": "senior", "principal": "senior",
     "intern": "intern", "trainee": "junior",
-    # Chức danh
+    # Chuc danh
     "mgr": "manager", "mngr": "manager",
     "dir": "director", "vp": "vice president",
     "assoc": "associate", "asst": "assistant",
     "rep": "representative", "exec": "executive",
     "admin": "administrator",
-    # Kỹ thuật
+    # Ky thuat
     "dev": "developer", "eng": "engineer",
     "swe": "software engineer",
     "frontend": "front end", "backend": "back end",
@@ -44,7 +43,7 @@ SYNONYM_MAP = {
     "bi": "business intelligence",
     "biz": "business", "bd": "business development",
     "ba": "business analyst", "pm": "project manager",
-    # Khác
+    # Khac
     "hr": "human resources",
     "cs": "customer service",
     "ae": "account executive",
@@ -63,7 +62,6 @@ SYNONYM_MAP = {
     "pt": "part time", "ft": "full time",
 }
 
-# Patterns loại bỏ noise trong job_title
 NOISE_PATTERNS = [
     r'\b(remote|hybrid|onsite|on.site)\b',
     r'\b(part.time|full.time|contract|temp|temporary)\b',
@@ -94,8 +92,7 @@ VALID_SINGLE_WORD = {
     "attorney", "lawyer", "doctor", "pharmacist",
 }
 
-
-# Lazy load whitelist
+# Lazy load whitelist — chi doc file 1 lan
 _WHITELIST = None
 
 def get_whitelist() -> set:
@@ -109,6 +106,14 @@ def get_whitelist() -> set:
             _WHITELIST = set()
             print("Khong co whitelist, bo qua filter")
     return _WHITELIST
+
+
+def reload_whitelist() -> set:
+    # Reset cache va doc lai tu file
+    # Dung sau khi update_whitelist() them skills moi
+    global _WHITELIST
+    _WHITELIST = None
+    return get_whitelist()
 
 
 # Lazy load spaCy
@@ -131,7 +136,7 @@ def process_job_title(text: str) -> str:
     if not isinstance(text, str):
         return ""
 
-    # Dùng spaCy NER loại bỏ tên tổ chức, địa điểm
+    # Dung spaCy NER loai bo ten to chuc, dia diem
     nlp = get_nlp()
     doc = nlp(text.strip())
     remove_spans = [
@@ -142,7 +147,7 @@ def process_job_title(text: str) -> str:
     for start, end in sorted(remove_spans, reverse=True):
         text = text[:start] + " " + text[end:]
 
-    # Lowercase và loại bỏ noise patterns
+    # Lowercase va loai bo noise patterns
     text = text.lower()
     for pattern in NOISE_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
@@ -150,11 +155,11 @@ def process_job_title(text: str) -> str:
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+",     " ", text).strip()
 
-    # Chuẩn hóa synonym
+    # Chuan hoa synonym
     for k, v in SYNONYM_MAP.items():
         text = re.sub(rf"\b{k}\b", v, text)
 
-    # Bỏ stopwords và lemmatize
+    # Bo stopwords va lemmatize
     tokens = [w for w in text.split() if w not in STOP_WORDS]
     text   = " ".join(lemmatizer.lemmatize(w) for w in tokens).strip()
 
@@ -166,33 +171,39 @@ def process_job_title(text: str) -> str:
     return text
 
 
-def process_job_skills(text: str, max_words: int = 4) -> str:
+def process_job_skills(
+    text: str,
+    max_words: int = 4,
+    use_whitelist: bool = True
+) -> str:
     if not isinstance(text, str):
         return ""
 
-    whitelist = get_whitelist()
+    # Lay whitelist neu can filter
+    whitelist = get_whitelist() if use_whitelist else set()
 
-    # Chuẩn hóa dấu phân cách
+    # Chuan hoa dau phan cach
     text = text.replace(".", ",").replace(";", ",")
     text = re.sub(r",+", ",", text)
     text = text.lower()
     text = re.sub(r"[^\w\s,]", " ", text)
     text = re.sub(r"\s+",      " ", text).strip()
 
-    # Tách thành phrases và dedup
-    phrases = list(dict.fromkeys([p.strip() for p in text.split(",") if p.strip()]))
+    # Tach thanh phrases va dedup
+    phrases = list(dict.fromkeys([
+        p.strip() for p in text.split(",") if p.strip()
+    ]))
 
     cleaned = []
     for phrase in phrases:
-        # Chuẩn hóa synonym
+        # Chuan hoa synonym
         for k, v in SYNONYM_MAP.items():
             phrase = re.sub(rf"\b{k}\b", v, phrase)
 
-        # Bỏ stopwords và lemmatize
-        tokens = [w for w in phrase.split() if w not in STOP_WORDS]
+        # Bo stopwords va lemmatize
+        tokens     = [w for w in phrase.split() if w not in STOP_WORDS]
         lemmatized = [lemmatizer.lemmatize(w) for w in tokens]
 
-        # Bỏ phrase rỗng hoặc quá dài
         if not lemmatized or len(lemmatized) > max_words:
             continue
 
@@ -201,18 +212,33 @@ def process_job_skills(text: str, max_words: int = 4) -> str:
         if len(skill) <= 1:
             continue
 
-        # Filter theo whitelist nếu có
-        if whitelist and skill not in whitelist:
+        # Normalize truoc khi filter whitelist
+        skill_norm = normalize_skill(skill)
+
+        # Filter theo whitelist (dung normalized version)
+        if use_whitelist and whitelist and skill_norm not in whitelist:
             continue
 
-        cleaned.append(skill)
+        # Luu normalized version
+        cleaned.append(skill_norm)
 
     return ", ".join(dict.fromkeys(cleaned)).strip(", ")
 
 
 def process_row(row: dict) -> tuple:
-    # Wrapper cho multiprocessing
+    # Dung cho bronze_to_silver.py
+    # Clean ca title lan skills (co filter whitelist)
     return (
         process_job_title(row["job_title"]),
-        process_job_skills(row["job_skills"])
+        process_job_skills(row["job_skills"], use_whitelist=True)
+    )
+
+
+def process_row_title_only(row: dict) -> tuple:
+    # Dung cho bronze_to_silver_new.py
+    # Chi clean title, giu nguyen skills tho
+    # Skills se duoc validate + filter sau boi update_whitelist() va filter_skills()
+    return (
+        process_job_title(row["job_title"]),
+        row["job_skills"]
     )

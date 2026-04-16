@@ -12,7 +12,7 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 sys.path.append(str(Path(__file__).parent / "core"))
 sys.path.append(str(Path(__file__).parent / "cv"))
 
-from loader        import load_index
+from loader        import load_all_indexes
 from recommend     import recommend_skills, print_recommendation
 from roadmap       import skill_gap_roadmap, print_roadmap
 from career_switch import career_switch_analysis, print_career_switch
@@ -34,7 +34,7 @@ def print_cv_result(data: dict, skills_clean: list):
 
 
 def input_info() -> dict:
-    # Nhập tay job_title và skills
+    # Nhap tay job_title va skills
     print(f"\n{DASH}")
     while True:
         job_title = input("  Nhap vi tri ung tuyen: ").strip()
@@ -72,7 +72,7 @@ def print_input(data: dict):
 
 
 def handle_career_switch(data: dict, df):
-    # Xử lý tính năng chuyển hướng nghề nghiệp
+    # Xu ly tinh nang chuyen huong nghe nghiep
     print(f"\n{DASH}")
     while True:
         job_from = input("  Vi tri hien tai: ").strip().lower()
@@ -112,9 +112,9 @@ def main():
     print("  powered by FAISS + Sentence Transformer")
     print(LINE)
 
-    # Load index 1 lần duy nhất khi khởi động
+    # Load ca 2 index 1 lan duy nhat khi khoi dong
     print("\nKhoi dong he thong...")
-    index, df = load_index()
+    index_old, df_old, index_new, df_new = load_all_indexes()
     print("San sang!\n")
 
     while True:
@@ -132,7 +132,7 @@ def main():
             print("  [!] Chon 1, 2 hoac 3!")
             continue
 
-        # Lấy job_title + skills từ CV hoặc nhập tay
+        # Lay job_title + skills tu CV hoac nhap tay
         if choice == "1":
             cv_path = pick_cv_file()
             print(f"  File: {Path(cv_path).name}")
@@ -149,7 +149,7 @@ def main():
             data = input_info()
             print_input(data)
 
-        # Chọn tính năng
+        # Chon tinh nang
         print(f"\n{DASH}")
         print("  a. Goi y skills con thieu")
         print("  b. Lo trinh hoc skills")
@@ -163,8 +163,10 @@ def main():
             result = recommend_skills(
                 cv_skills  = data["skills"],
                 job_title  = data["vi_tri_ung_tuyen"],
-                index      = index,
-                df         = df,
+                index_old  = index_old,
+                df_old     = df_old,
+                index_new  = index_new,
+                df_new     = df_new,
                 top_k      = 150,
                 top_skills = 10
             )
@@ -173,12 +175,15 @@ def main():
             result = skill_gap_roadmap(
                 cv_skills = data["skills"],
                 job_title = data["vi_tri_ung_tuyen"],
-                df        = df,
+                df_old        = df_old,
+                index_old = index_old,
+                index_new = index_new,  # ← thêm
+                df_new    = df_new, 
                 top_n     = 5
             )
             print_roadmap(result)
         elif feature == "c":
-            handle_career_switch(data, df)
+            handle_career_switch(data, df_old)
         else:
             print("  [!] Chon a, b, c hoac d!")
 

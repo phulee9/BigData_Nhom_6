@@ -1,42 +1,57 @@
-import pickle
+import numpy as np
 import pandas as pd
 from collections import Counter
 from pathlib import Path
-from skill_config import is_valid_skill
-
-BASE_DIR  = Path(__file__).parent.parent / "data"
-META_FILE = BASE_DIR / "job_metadata.pkl"
+from skill_config import is_valid_skill, normalize_skill
+from recommend import model, clean_query, search_index
 
 
-def load_metadata() -> pd.DataFrame:
-    with open(META_FILE, "rb") as f:
-        return pickle.load(f)
+BASE_DIR = Path(__file__).parent.parent / "data"
 
 
 def skill_gap_roadmap(
-    cv_skills: list,
-    job_title: str,
-    df: pd.DataFrame,
-    top_n: int = 5
+    cv_skills:  list,
+    job_title:  str,
+    df_old:     pd.DataFrame,
+    index_old,
+    top_n:      int   = 5,
+    index_new         = None,
+    df_new            = None,
+    w_old:      float = 0.6,
+    w_new:      float = 0.4
 ) -> dict:
-    cv_set  = set(s.lower().strip() for s in cv_skills)
-    pattern = job_title.lower().strip()
+    cv_set = set(s.lower().strip() for s in cv_skills)
 
-    # Tìm jobs theo title, fallback fuzzy nếu không có kết quả
-    target_jobs = df[df["job_title"].str.contains(pattern, case=False, na=False)]
+    # Encode query = job_title + cv_skills (giong recommend.py)
+    query        = job_title + " " + " ".join(cv_set)
+    query_vector = model.encode(
+        [clean_query(query)], normalize_embeddings=True
+    ).astype("float32")
 
-    if target_jobs.empty:
-        words = [w for w in pattern.split() if len(w) > 2]
-        if words:
-            mask = df["job_title"].str.contains("|".join(words), case=False, na=False)
-            target_jobs = df[mask]
+    # Tim jobs tu index cu, lay tat ca sau filter theo title
+    candidates_old = search_index(
+        query_vector, index_old, df_old, job_title, k=200
+    )
+    total_old = len(candidates_old)
 
-    total = len(target_jobs)
+    # Tim jobs tu index moi neu co, lay tat ca sau filter theo title
+    candidates_new = pd.DataFrame()
+    total_new      = 0
 
-    if total == 0:
+    if index_new is not None and df_new is not None and len(df_new) > 0:
+        k_new          = min(200, len(df_new))
+        candidates_new = search_index(
+            query_vector, index_new, df_new, job_title, k=k_new
+        )
+        total_new = len(candidates_new)
+
+    # TH4: ca 2 deu khong co job -> tra ve error
+    if total_old == 0 and total_new == 0:
         return {
             "job_title"  : job_title,
             "total_jobs" : 0,
+            "total_old"  : 0,
+            "total_new"  : 0,
             "cv_skills"  : list(cv_set),
             "must_have"  : [],
             "should_have": [],
@@ -44,43 +59,90 @@ def skill_gap_roadmap(
             "error"      : f"Khong tim thay '{job_title}' trong du lieu!"
         }
 
-    # Đếm tần suất và tính phần trăm skill
-    skill_freq = Counter()
-    for _, row in target_jobs.iterrows():
-        skills = [
-            s.strip().lower()
-            for s in row["job_skills"].split(", ")
-            if s.strip() and is_valid_skill(s.strip())
-        ]
-        skill_freq.update(skills)
+    # Dem tan suat skills tu index cu
+    skill_freq_old = Counter()
+    if total_old > 0:
+        for _, row in candidates_old.iterrows():
+            skills = [
+                normalize_skill(s.strip().lower())
+                for s in row["job_skills"].split(", ")
+                if s.strip() and is_valid_skill(s.strip())
+            ]
+            skill_freq_old.update(skills)
 
-    skill_pct = {s: round(c / total * 100, 1) for s, c in skill_freq.items()}
+    # Dem tan suat skills tu index moi
+    skill_freq_new = Counter()
+    if total_new > 0:
+        for _, row in candidates_new.iterrows():
+            skills = [
+                normalize_skill(s.strip().lower())
+                for s in row["job_skills"].split(", ")
+                if s.strip() and is_valid_skill(s.strip())
+            ]
+            skill_freq_new.update(skills)
 
-    # Xác định ngưỡng động theo phân vị
-    pct_values = sorted(skill_pct.values(), reverse=True)
-    if len(pct_values) >= 3:
-        high_threshold = pct_values[min(5,  len(pct_values) - 1)]
-        mid_threshold  = pct_values[min(15, len(pct_values) - 1)]
-    else:
-        high_threshold = 30
-        mid_threshold  = 15
+    # Tinh % rieng tung nguon
+    skill_pct_old = {s: c / total_old for s, c in skill_freq_old.items()} \
+        if total_old > 0 else {}
+    skill_pct_new = {s: c / total_new for s, c in skill_freq_new.items()} \
+        if total_new > 0 else {}
 
-    # Phân loại skills theo mức độ ưu tiên
-    must_have, should_have, nice_have = [], [], []
+    # Merge co trong so giong recommend.py — 4 truong hop
+    all_skills  = set(skill_pct_old) | set(skill_pct_new)
+    skill_score = {}
 
-    for skill, pct in sorted(skill_pct.items(), key=lambda x: -x[1]):
+    for skill in all_skills:
         if skill in cv_set:
             continue
-        if pct >= high_threshold:
+
+        pct_old = skill_pct_old.get(skill, 0)
+        pct_new = skill_pct_new.get(skill, 0)
+
+        if total_old > 0 and total_new > 0:
+            # TH1: ca 2 co job -> merge co trong so
+            if pct_old > 0 and pct_new > 0:
+                skill_score[skill] = w_old * pct_old + w_new * pct_new
+            elif pct_new > 0:
+                # Chi xuat hien o index moi -> giam trong so
+                skill_score[skill] = w_new * pct_new * 0.5
+            else:
+                # Chi xuat hien o index cu
+                skill_score[skill] = w_old * pct_old
+
+        elif total_old > 0:
+            # TH2: chi co index cu -> dung 100% index cu
+            skill_score[skill] = pct_old
+
+        else:
+            # TH3: chi co index moi -> dung 100% index moi
+            skill_score[skill] = pct_new
+
+    # Xac dinh nguong dong theo phan vi
+    score_values = sorted(skill_score.values(), reverse=True)
+    if len(score_values) >= 3:
+        high_threshold = score_values[min(5,  len(score_values) - 1)]
+        mid_threshold  = score_values[min(15, len(score_values) - 1)]
+    else:
+        high_threshold = 0.30
+        mid_threshold  = 0.15
+
+    # Phan loai skills theo muc do uu tien
+    must_have, should_have, nice_have = [], [], []
+
+    for skill, score in sorted(skill_score.items(), key=lambda x: -x[1]):
+        pct = round(score * 100, 1)
+        if score >= high_threshold:
             must_have.append({"skill": skill, "pct": pct})
-        elif pct >= mid_threshold:
+        elif score >= mid_threshold:
             should_have.append({"skill": skill, "pct": pct})
-        elif pct >= 5:
+        elif score >= 0.05:
             nice_have.append({"skill": skill, "pct": pct})
 
     return {
         "job_title"  : job_title,
-        "total_jobs" : total,
+        "total_jobs" : total_old + total_new,
+        "total_old"  : total_old,
+        "total_new"  : total_new,
         "cv_skills"  : list(cv_set),
         "must_have"  : must_have[:top_n],
         "should_have": should_have[:top_n],
@@ -89,7 +151,10 @@ def skill_gap_roadmap(
 
 
 def print_roadmap(result: dict):
-    LINE = "=" * 50
+    LINE  = "=" * 50
+    t_old = result.get("total_old", 0)
+    t_new = result.get("total_new", 0)
+    total = result.get("total_jobs", 0)
 
     if result.get("error"):
         print(f"\n[!] {result['error']}")
@@ -99,7 +164,7 @@ def print_roadmap(result: dict):
     print("  LO TRINH HOC SKILLS")
     print(LINE)
     print(f"  Job title : {result['job_title']}")
-    print(f"  Tong jobs : {result['total_jobs']:,} jobs phan tich")
+    print(f"  Tong jobs : {total:,} ({t_old} cu + {t_new} moi)")
 
     print(f"\n  Skills da co:")
     for s in result["cv_skills"]:
