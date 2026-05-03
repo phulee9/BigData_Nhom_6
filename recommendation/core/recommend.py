@@ -1,262 +1,191 @@
-import re
-import sys
-import nltk
+from collections import Counter, defaultdict
+
 import numpy as np
-import pandas as pd
-from collections import Counter
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import stopwords
+from rapidfuzz import fuzz
 
-# Them path den etl/ de import nlp_utils
-sys.path.append(str(Path(__file__).parent.parent.parent / "etl"))
-
-from skill_config import normalize_skill, is_valid_skill
-
-# Setup NLTK
-for pkg in ["wordnet", "omw-1.4", "stopwords"]:
-    try:
-        nltk.data.find(f"corpora/{pkg}")
-    except Exception:
-        nltk.download(pkg, quiet=True)
-
-lemmatizer = WordNetLemmatizer()
-STOP_WORDS  = set(stopwords.words("english"))
-
-# Load Sentence Transformer 1 lan khi import
-print("Load Sentence Transformer...")
-model = SentenceTransformer("all-MiniLM-L6-v2")
-print("Model ready!")
+from recommendation.core.preprocess import normalize_skill
 
 
-def clean_query(text: str) -> str:
-    if not isinstance(text, str):
-        return ""
-    text   = text.lower()
-    text   = re.sub(r"[^\w\s]", " ", text)
-    text   = re.sub(r"\s+",     " ", text).strip()
-    tokens = [w for w in text.split() if w not in STOP_WORDS]
-    return " ".join(lemmatizer.lemmatize(w) for w in tokens)
+def jaccard_score(a, b):
+    a = set(a)
+    b = set(b)
+    return len(a & b) / len(a | b) if a and b else 0.0
 
 
-def get_keywords(job_title: str) -> list:
-    # Lay keywords tu job_title goc lan job_title da normalize
-    # Dam bao khop duoc voi data da qua NLP pipeline
-    # VD: "backend" -> raw=["backend"] + clean=["back","end"]
-    # -> filter tim duoc ca "back end developer" trong data
-    try:
-        from nlp_utils import process_job_title
-        job_title_clean = process_job_title(job_title)
-        clean_words = [w for w in job_title_clean.split() if len(w) > 2]
-    except Exception:
-        clean_words = []
+def location_score(query_location, job_location):
+    query_location = str(query_location).lower().strip()
+    job_location = str(job_location).lower().strip()
 
-    raw_words = [w for w in job_title.lower().split() if len(w) > 2]
-    return list(set(raw_words + clean_words))
+    if query_location == job_location:
+        return 1.0
+
+    if query_location == "remote" and job_location == "remote":
+        return 1.0
+
+    return 0.0
 
 
-def search_index(
-    query_vector: np.ndarray,
-    index,
-    df:        pd.DataFrame,
-    job_title: str,
-    k:         int
-) -> pd.DataFrame:
-    # Tim top k jobs gan nhat trong index
-    # Filter theo keywords cua job_title (ca raw lan normalized)
-    # Khong fallback — tra ve ket qua filter thuc te ke ca khi rong
-    scores, indices = index.search(query_vector, k=k)
-    candidates      = df.iloc[indices[0]].copy()
-    candidates["score"] = scores[0]
-
-    keywords = get_keywords(job_title)
-    if keywords:
-        mask     = candidates["job_title"].str.contains(
-            "|".join(keywords), case=False, na=False
-        )
-        filtered = candidates[mask]
-    else:
-        filtered = candidates
-
-    return filtered
+def title_score(query_title, job_title):
+    return fuzz.token_set_ratio(query_title, job_title) / 100
 
 
-def count_missing_skills(
-    candidate_jobs:  pd.DataFrame,
-    user_skills_set: set
-) -> Counter:
-    # Dem skills con thieu tu cac jobs tuong tu
-    missing = []
-    for _, row in candidate_jobs.iterrows():
-        job_skills = set(
-            normalize_skill(s)
-            for s in row["job_skills"].lower().split(", ")
-            if s.strip() and is_valid_skill(normalize_skill(s.strip()))
-        )
-        missing += list(job_skills - user_skills_set)
-    return Counter(missing)
-
-
-def recommend_skills(
-    cv_skills:  list,
-    job_title:  str,
-    index_old,
-    df_old:     pd.DataFrame,
-    top_k:      int   = 150,
-    top_skills: int   = 10,
-    index_new         = None,
-    df_new            = None,
-    w_old:      float = 0.6,
-    w_new:      float = 0.4
-) -> dict:
-    # Chuan hoa skills tu CV
-    cv_skills_clean = [normalize_skill(s.lower().strip()) for s in cv_skills]
-    user_skills_set = set(cv_skills_clean)
-
-    # Encode query = job_title + cv_skills (giong format index)
-    query        = job_title + " " + " ".join(cv_skills_clean)
-    query_vector = model.encode(
-        [clean_query(query)], normalize_embeddings=True
-    ).astype("float32")
-
-    # Tim jobs tu index cu, lay tat ca sau filter theo title
-    candidates_old = search_index(
-        query_vector, index_old, df_old, job_title, k=200
+def normalize_skill_set(skills):
+    return set(
+        normalize_skill(skill)
+        for skill in skills
+        if normalize_skill(skill)
     )
-    total_old = len(candidates_old)
 
-    # Tim jobs tu index moi neu co, lay tat ca sau filter theo title
-    candidates_new = pd.DataFrame()
-    total_new      = 0
 
-    if index_new is not None and df_new is not None and len(df_new) > 0:
-        k_new          = min(200, len(df_new))
-        candidates_new = search_index(
-            query_vector, index_new, df_new, job_title, k=k_new
-        )
-        total_new = len(candidates_new)
+def recommend_from_cv_input(
+    cv_input,
+    index,
+    metadata,
+    model,
+    retrieve_jobs=200,
+    rerank_jobs=50,
+    top_skills=10,
+):
+    title = cv_input.get("job_title", "")
+    location = cv_input.get("location", "other")
 
-    # TH4: ca 2 deu khong co job sau filter -> tra ve error
-    if total_old == 0 and total_new == 0:
-        return {
-            "vi_tri_ung_tuyen"   : job_title,
-            "job_titles_gan_nhat": [],
-            "top_scores"         : [],
-            "skills_da_co"       : cv_skills_clean,
-            "total_candidates"   : 0,
-            "total_old"          : 0,
-            "total_new"          : 0,
-            "skills_goi_y"       : [],
-            "error"              : f"Khong tim thay job phu hop voi vi tri '{job_title}'"
-        }
+    # Normalize lại skill user lần cuối để chống trùng kiểu node / node js / node.js
+    current_skills = normalize_skill_set(cv_input.get("skills", []))
 
-    # Tinh % xuat hien tung skill trong index cu (TH1 + TH2)
-    skill_pct_old = {}
-    if total_old > 0:
-        counts_old    = count_missing_skills(candidates_old, set())
-        skill_pct_old = {s: c / total_old for s, c in counts_old.items()}
+    if not title:
+        raise ValueError("job_title rỗng sau khi clean")
 
-    # Tinh % xuat hien tung skill trong index moi (TH1 + TH3)
-    skill_pct_new = {}
-    if total_new > 0:
-        counts_new    = count_missing_skills(candidates_new, set())
-        skill_pct_new = {s: c / total_new for s, c in counts_new.items()}
+    query = f"{title} in {location}"
 
-    # Merge ket qua theo 4 truong hop
-    all_skills = set(skill_pct_old) | set(skill_pct_new)
-    merged     = {}
+    query_vec = model.encode([query], normalize_embeddings=True)
+    query_vec = np.asarray(query_vec).astype("float32")
 
-    for skill in all_skills:
-        # Bo qua skills nguoi dung da co trong CV
-        if skill in user_skills_set:
+    scores, ids = index.search(query_vec, retrieve_jobs)
+
+    candidates = []
+
+    for semantic, idx in zip(scores[0], ids[0]):
+        if idx < 0:
             continue
 
-        pct_old = skill_pct_old.get(skill, 0)
-        pct_new = skill_pct_new.get(skill, 0)
+        item = metadata[idx]
 
-        if total_old > 0 and total_new > 0:
-            # TH1: ca 2 co job -> merge co trong so
-            if pct_old > 0 and pct_new > 0:
-                merged[skill] = w_old * pct_old + w_new * pct_new
-            elif pct_new > 0:
-                # Chi xuat hien o index moi -> giam trong so
-                merged[skill] = w_new * pct_new * 0.5
-            else:
-                # Chi xuat hien o index cu
-                merged[skill] = w_old * pct_old
+        job_title = item.get("job_title", "")
+        job_location = item.get("location", "other")
 
-        elif total_old > 0:
-            # TH2: chi co index cu -> dung 100% index cu
-            merged[skill] = pct_old
+        # Normalize job skills trước khi tính overlap + recommend
+        job_skills_norm = sorted(list(normalize_skill_set(item.get("skills", []))))
 
-        else:
-            # TH3: chi co index moi -> dung 100% index moi
-            merged[skill] = pct_new
+        semantic = float(semantic)
+        title_sim = title_score(title, job_title)
+        overlap_sim = jaccard_score(current_skills, job_skills_norm)
+        location_sim = location_score(location, job_location)
 
-    # Sap xep giam dan theo score, lay top skills
-    top = sorted(merged.items(), key=lambda x: -x[1])[:top_skills]
+        job_score = (
+            0.50 * semantic
+            + 0.25 * title_sim
+            + 0.15 * overlap_sim
+            + 0.10 * location_sim
+        )
 
-    total_candidates = total_old + total_new
+        candidates.append(
+            {
+                "job_title": job_title,
+                "location": job_location,
+                "skills": job_skills_norm,
+                "score": round(job_score, 4),
+                "semantic_score": round(semantic, 4),
+                "title_score": round(title_sim, 4),
+                "skill_overlap_score": round(overlap_sim, 4),
+                "location_score": round(location_sim, 4),
+            }
+        )
 
-    # Job titles gan nhat tu nguon co du lieu
-    titles_old = candidates_old["job_title"].unique()[:2].tolist() \
-        if not candidates_old.empty else []
-    titles_new = candidates_new["job_title"].unique()[:1].tolist() \
-        if not candidates_new.empty else []
-    job_titles = (titles_old + titles_new)[:3]
+    candidates = sorted(
+        candidates,
+        key=lambda x: x["score"],
+        reverse=True,
+    )[:rerank_jobs]
 
-    # Top scores tu nguon co du lieu
-    if not candidates_old.empty:
-        top_scores = candidates_old["score"].head(3).tolist()
-    else:
-        top_scores = candidates_new["score"].head(3).tolist()
+    top_jobs = [
+        {
+            "rank": i + 1,
+            "job_title": job["job_title"],
+            "location": job["location"],
+            "score": job["score"],
+        }
+        for i, job in enumerate(candidates[:5])
+    ]
+
+    skill_weighted_scores = defaultdict(float)
+    skill_freq = Counter()
+
+    for job in candidates:
+        for skill in job["skills"]:
+            # skill ở đây đã normalize rồi, nhưng vẫn check lại cho chắc
+            skill_norm = normalize_skill(skill)
+
+            if not skill_norm:
+                continue
+
+            # Nếu user đã có node, thì node js/node.js/nodejs đều đã thành node và bị loại
+            if skill_norm in current_skills:
+                continue
+
+            skill_weighted_scores[skill_norm] += job["score"]
+            skill_freq[skill_norm] += 1
+
+    max_weighted_score = max(skill_weighted_scores.values(), default=1.0)
+    max_freq = max(skill_freq.values(), default=1)
+
+    final_skill_scores = {}
+
+    for skill in skill_weighted_scores:
+        weighted_score_norm = skill_weighted_scores[skill] / max_weighted_score
+        freq_score_norm = skill_freq[skill] / max_freq
+
+        final_skill_scores[skill] = (
+            0.80 * weighted_score_norm
+            + 0.20 * freq_score_norm
+        )
+
+    ranked_skills = sorted(
+        final_skill_scores.items(),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    top_missing_skills = []
+    seen_skills = set()
+
+    for skill, score in ranked_skills:
+        skill_norm = normalize_skill(skill)
+
+        if not skill_norm:
+            continue
+
+        if skill_norm in current_skills:
+            continue
+
+        if skill_norm in seen_skills:
+            continue
+
+        seen_skills.add(skill_norm)
+
+        top_missing_skills.append(
+            {
+                "rank": len(top_missing_skills) + 1,
+                "skill": skill_norm,
+                "score": round(score, 4),
+                "frequency": skill_freq[skill_norm],
+            }
+        )
+
+        if len(top_missing_skills) >= top_skills:
+            break
 
     return {
-        "vi_tri_ung_tuyen"   : job_title,
-        "job_titles_gan_nhat": job_titles,
-        "top_scores"         : top_scores,
-        "skills_da_co"       : cv_skills_clean,
-        "total_candidates"   : total_candidates,
-        "total_old"          : total_old,
-        "total_new"          : total_new,
-        "skills_goi_y"       : [
-            {"skill": s, "score": round(score, 3)}
-            for s, score in top
-        ],
+        "query": query,
+        "top_5_similar_jobs": top_jobs,
+        "top_10_missing_skills": top_missing_skills,
     }
-
-
-def print_recommendation(result: dict):
-    LINE  = "=" * 50
-    t_old = result.get("total_old", 0)
-    t_new = result.get("total_new", 0)
-    total = result.get("total_candidates", 0)
-
-    print(f"\n{LINE}")
-    print("  KET QUA GOI Y SKILLS")
-    print(LINE)
-    print(f"  Vi tri : {result['vi_tri_ung_tuyen']}")
-
-    if result.get("error"):
-        print(f"\n  [!] {result['error']}")
-        print(LINE)
-        return
-
-    print(f"  Jobs   : {total} ({t_old} cu + {t_new} moi)")
-
-    print(f"\n  Job titles gan nhat:")
-    for i, (t, s) in enumerate(
-        zip(result["job_titles_gan_nhat"], result["top_scores"]), 1
-    ):
-        print(f"    {i}. {t} (do tuong dong: {s:.2f})")
-
-    print(f"\n  Skills da co ({len(result['skills_da_co'])}):")
-    for s in result["skills_da_co"]:
-        print(f"    v {s}")
-
-    print(f"\n  Skills nen hoc them:")
-    for i, item in enumerate(result["skills_goi_y"], 1):
-        print(f"    {i}. {item['skill']} (score: {item['score']})")
-
-    print(LINE)

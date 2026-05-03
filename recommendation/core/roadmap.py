@@ -20,7 +20,7 @@ def skill_gap_roadmap(
     w_old:      float = 0.6,
     w_new:      float = 0.4
 ) -> dict:
-    cv_set = set(s.lower().strip() for s in cv_skills)
+    cv_set = set(normalize_skill(s.lower().strip()) for s in cv_skills)
 
     # Encode query = job_title + cv_skills (giong recommend.py)
     query        = job_title + " " + " ".join(cv_set)
@@ -63,22 +63,22 @@ def skill_gap_roadmap(
     skill_freq_old = Counter()
     if total_old > 0:
         for _, row in candidates_old.iterrows():
-            skills = [
-                normalize_skill(s.strip().lower())
-                for s in row["job_skills"].split(", ")
-                if s.strip() and is_valid_skill(s.strip())
-            ]
+            skills = []
+            for s in row["job_skills"].split(", "):
+                s_norm = normalize_skill(s.strip().lower())
+                if s_norm and is_valid_skill(s_norm):
+                    skills.append(s_norm)
             skill_freq_old.update(skills)
 
     # Dem tan suat skills tu index moi
     skill_freq_new = Counter()
     if total_new > 0:
         for _, row in candidates_new.iterrows():
-            skills = [
-                normalize_skill(s.strip().lower())
-                for s in row["job_skills"].split(", ")
-                if s.strip() and is_valid_skill(s.strip())
-            ]
+            skills = []
+            for s in row["job_skills"].split(", "):
+                s_norm = normalize_skill(s.strip().lower())
+                if s_norm and is_valid_skill(s_norm):
+                    skills.append(s_norm)
             skill_freq_new.update(skills)
 
     # Tinh % rieng tung nguon
