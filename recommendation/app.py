@@ -5,6 +5,9 @@ import tempfile
 import pandas as pd
 import streamlit as st
 
+# =========================================================
+# PATH CONFIG
+# =========================================================
 BASE_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(BASE_DIR))
 
@@ -19,269 +22,416 @@ from recommendation.core.preprocess import (
 
 
 # =========================================================
+# POWER BI EMBED LINK
+# Dán link ở ô "Link to embed this content" của Power BI vào đây
+# Ví dụ: https://app.powerbi.com/reportEmbed?reportId=...
+# =========================================================
+POWERBI_EMBED_URL = "https://app.powerbi.com/reportEmbed?reportId=5b1bcd7b-b8d1-4dec-8472-6513baeaf987&autoAuth=true&ctid=e7572e92-7aee-4713-a3c4-ba64888ad45f"
+
+
+# =========================================================
 # PAGE CONFIG
 # =========================================================
 st.set_page_config(
     page_title="Skill Recommendation System",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 
 # =========================================================
-# DARK PROFESSIONAL CSS
+# CSS — Refined Minimal Dark
 # =========================================================
 st.markdown(
     """
     <style>
-        /* App background */
-        .stApp {
-            background:
-                radial-gradient(circle at top left, rgba(59, 130, 246, 0.15), transparent 34%),
-                radial-gradient(circle at top right, rgba(20, 184, 166, 0.12), transparent 30%),
-                #0b1120;
-            color: #e5e7eb;
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        html, body, .stApp {
+            background: #07090f;
+            color: #c9d1e0;
+            font-family: 'DM Sans', sans-serif;
         }
+
+        header[data-testid="stHeader"] { background: transparent !important; }
 
         .block-container {
-            max-width: 1240px;
-            padding-top: 30px;
-            padding-bottom: 42px;
+            max-width: 1280px;
+            padding: 36px 40px 60px;
         }
 
-        header[data-testid="stHeader"] {
-            background: transparent;
+        /* ── HERO ── */
+        .hero {
+            padding: 48px 0 36px;
+            border-bottom: 1px solid #141927;
+            margin-bottom: 40px;
         }
 
-        /* Sidebar */
-        section[data-testid="stSidebar"] {
-            background: #0f172a;
-            border-right: 1px solid #1f2937;
-        }
-
-        section[data-testid="stSidebar"] * {
-            color: #e5e7eb;
-        }
-
-        section[data-testid="stSidebar"] .stSlider label,
-        section[data-testid="stSidebar"] .stMarkdown,
-        section[data-testid="stSidebar"] .stCaption {
-            color: #e5e7eb !important;
-        }
-
-        /* Text */
-        h1, h2, h3, h4, h5, h6, p, label, span, div {
-            color: #e5e7eb;
-        }
-
-        .muted {
-            color: #94a3b8;
-            font-size: 14px;
-            line-height: 1.6;
-        }
-
-        /* Header card */
-        .app-header {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.95));
-            border: 1px solid #263244;
-            border-radius: 22px;
-            padding: 34px 38px;
-            margin-bottom: 22px;
-            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.35);
-        }
-
-        .app-title {
-            font-size: 36px;
-            font-weight: 850;
-            color: #f8fafc;
-            letter-spacing: -0.04em;
-            margin-bottom: 10px;
-        }
-
-        .app-description {
-            font-size: 15.5px;
-            line-height: 1.7;
-            color: #cbd5e1;
-            max-width: 900px;
-        }
-
-        /* Cards */
-        .card {
-            background: rgba(15, 23, 42, 0.88);
-            border: 1px solid #263244;
-            border-radius: 18px;
-            padding: 24px;
-            margin-bottom: 18px;
-            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
-        }
-
-        .card-title {
-            font-size: 18px;
-            font-weight: 760;
-            color: #f8fafc;
-            margin-bottom: 14px;
-        }
-
-        .card-subtitle {
-            font-size: 14px;
-            color: #94a3b8;
-            line-height: 1.6;
-            margin-bottom: 14px;
-        }
-
-        .section-label {
-            font-size: 12px;
-            font-weight: 760;
-            letter-spacing: 0.08em;
+        .hero-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.14em;
             text-transform: uppercase;
-            color: #94a3b8;
-            margin-bottom: 8px;
+            color: #3b82f6;
+            margin-bottom: 18px;
         }
 
-        /* Status */
-        .status-ready {
-            background: rgba(20, 184, 166, 0.12);
-            border: 1px solid rgba(45, 212, 191, 0.35);
-            color: #ccfbf1;
-            padding: 12px 15px;
-            border-radius: 14px;
-            font-size: 14px;
+        .hero-eyebrow::before {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 1.5px;
+            background: #3b82f6;
+        }
+
+        .hero-title {
+            font-size: 42px;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            color: #f0f4ff;
+            line-height: 1.15;
+            margin-bottom: 14px;
+        }
+
+        .hero-desc {
+            font-size: 15px;
+            line-height: 1.75;
+            color: #5d6b85;
+            max-width: 680px;
+            font-weight: 400;
+        }
+
+        .hero-pills {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 28px;
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            background: #0d1117;
+            border: 1px solid #1a2235;
+            color: #7a8ba8;
+            padding: 7px 13px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+            font-family: 'DM Mono', monospace;
+        }
+
+        .pill-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #10b981;
+            flex-shrink: 0;
+        }
+
+        /* ── SECTION HEADER ── */
+        .sec-header {
             margin-bottom: 20px;
         }
 
-        .status-muted {
-            background: rgba(15, 23, 42, 0.88);
-            border: 1px solid #263244;
-            color: #cbd5e1;
-            padding: 14px 15px;
-            border-radius: 14px;
-            font-size: 14px;
+        .sec-label {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            color: #3b82f6;
+            margin-bottom: 6px;
         }
 
-        /* Tags */
+        .sec-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #edf2ff;
+            letter-spacing: -0.02em;
+            margin-bottom: 4px;
+        }
+
+        .sec-desc {
+            font-size: 13.5px;
+            color: #4a5568;
+            line-height: 1.6;
+        }
+
+        /* ── DIVIDER ── */
+        .divider {
+            height: 1px;
+            background: #141927;
+            margin: 36px 0;
+        }
+
+        /* ── CARD ── */
+        .card {
+            background: #0d1117;
+            border: 1px solid #161d2e;
+            border-radius: 14px;
+            padding: 28px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 15px;
+            font-weight: 650;
+            color: #dde5f5;
+            margin-bottom: 4px;
+            letter-spacing: -0.01em;
+        }
+
+        .card-desc {
+            font-size: 13px;
+            color: #3d4f6a;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        /* ── DASHBOARD FRAME ── */
+        .db-wrap {
+            border: 1px solid #161d2e;
+            border-radius: 14px;
+            overflow: hidden;
+            background: #050709;
+        }
+
+        /* ── WARNING / INFO BOXES ── */
+        .warn-box {
+            background: rgba(234, 179, 8, 0.06);
+            border: 1px solid rgba(234, 179, 8, 0.2);
+            color: #c4a53a;
+            padding: 14px 18px;
+            border-radius: 10px;
+            font-size: 13.5px;
+            line-height: 1.65;
+        }
+
+        .info-box {
+            background: rgba(59, 130, 246, 0.07);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            color: #8ab4f8;
+            padding: 14px 18px;
+            border-radius: 10px;
+            font-size: 13.5px;
+            line-height: 1.65;
+        }
+
+        /* ── TAGS ── */
         .tag {
             display: inline-block;
-            background: rgba(30, 41, 59, 0.9);
-            border: 1px solid #334155;
-            color: #e2e8f0;
-            border-radius: 999px;
-            padding: 7px 12px;
-            margin: 4px 5px 4px 0;
-            font-size: 13px;
-            font-weight: 620;
+            background: #0d1117;
+            border: 1px solid #1e2a40;
+            color: #8fa3c4;
+            border-radius: 6px;
+            padding: 5px 11px;
+            margin: 3px 4px 3px 0;
+            font-size: 12.5px;
+            font-weight: 500;
+            font-family: 'DM Mono', monospace;
         }
 
-        .tag-recommend {
+        .tag-rec {
             display: inline-block;
-            background: rgba(37, 99, 235, 0.18);
-            border: 1px solid rgba(96, 165, 250, 0.45);
-            color: #dbeafe;
-            border-radius: 999px;
-            padding: 8px 12px;
-            margin: 5px 6px 5px 0;
-            font-size: 13px;
-            font-weight: 650;
+            background: rgba(59, 130, 246, 0.08);
+            border: 1px solid rgba(59, 130, 246, 0.22);
+            color: #93b4f7;
+            border-radius: 6px;
+            padding: 6px 11px;
+            margin: 4px 5px 4px 0;
+            font-size: 12.5px;
+            font-weight: 500;
+            font-family: 'DM Mono', monospace;
         }
 
-        .tag-rank {
-            color: #93c5fd;
-            font-weight: 700;
-            margin-right: 4px;
-        }
+        .muted { color: #3d4f6a; font-size: 13.5px; }
 
-        /* Streamlit components */
-        div[data-testid="stMetric"] {
-            background: rgba(30, 41, 59, 0.82);
-            border: 1px solid #334155;
-            border-radius: 15px;
-            padding: 15px 16px;
-        }
-
-        div[data-testid="stMetricValue"] {
-            font-size: 20px;
-            color: #f8fafc;
-        }
-
-        div[data-testid="stMetricLabel"] {
-            font-size: 13px;
-            color: #94a3b8;
-        }
-
+        /* ── INPUTS ── */
         .stTextInput input,
         .stTextArea textarea {
-            background-color: #111827 !important;
-            color: #f8fafc !important;
-            border: 1px solid #334155 !important;
-            border-radius: 12px !important;
+            background: #0a0e17 !important;
+            color: #c9d1e0 !important;
+            border: 1px solid #1e2a40 !important;
+            border-radius: 9px !important;
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 14px !important;
+            padding: 10px 14px !important;
+            transition: border-color 0.18s ease !important;
+        }
+
+        .stTextInput input:focus,
+        .stTextArea textarea:focus {
+            border-color: #3b82f6 !important;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.12) !important;
         }
 
         .stTextInput input::placeholder,
         .stTextArea textarea::placeholder {
-            color: #64748b !important;
+            color: #2d3d55 !important;
         }
 
+        label[data-testid="stWidgetLabel"] p {
+            color: #5d7099 !important;
+            font-size: 12.5px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.04em !important;
+            text-transform: uppercase !important;
+        }
+
+        /* ── FILE UPLOADER ── */
         .stFileUploader {
-            background: rgba(15, 23, 42, 0.65);
-            border-radius: 14px;
+            background: #0a0e17;
+            border-radius: 12px;
         }
 
+        [data-testid="stFileUploaderDropzone"] {
+            background: #0a0e17 !important;
+            border: 1.5px dashed #1e2a40 !important;
+            border-radius: 10px !important;
+        }
+
+        /* ── BUTTONS ── */
         .stButton > button {
-            border-radius: 12px;
-            font-weight: 750;
-            height: 44px;
-            background: #2563eb;
-            color: #ffffff;
-            border: 1px solid #3b82f6;
+            border-radius: 9px !important;
+            font-weight: 600 !important;
+            font-size: 13.5px !important;
+            height: 42px !important;
+            background: #1a2844 !important;
+            color: #93b4f7 !important;
+            border: 1px solid #1e3460 !important;
+            transition: background 0.18s, border-color 0.18s !important;
+            font-family: 'DM Sans', sans-serif !important;
         }
 
         .stButton > button:hover {
-            background: #1d4ed8;
-            color: #ffffff;
-            border: 1px solid #60a5fa;
+            background: #1f3460 !important;
+            border-color: #3b82f6 !important;
+            color: #c0d4ff !important;
         }
 
-        button[kind="primary"] {
-            background: linear-gradient(135deg, #2563eb, #14b8a6) !important;
-            color: #ffffff !important;
-            border: none !important;
+        button[kind="primary"],
+        .stButton > button[kind="primary"] {
+            background: #1e40af !important;
+            color: #dbeafe !important;
+            border: 1px solid #2563eb !important;
         }
 
-        /* Tabs */
+        button[kind="primary"]:hover,
+        .stButton > button[kind="primary"]:hover {
+            background: #2563eb !important;
+            border-color: #3b82f6 !important;
+            color: #eff6ff !important;
+        }
+
+        /* ── TABS ── */
+        [data-baseweb="tab-list"] {
+            background: transparent !important;
+            border-bottom: 1px solid #141927 !important;
+            gap: 0 !important;
+        }
+
         button[data-baseweb="tab"] {
-            color: #94a3b8;
-            font-weight: 650;
+            background: transparent !important;
+            color: #3d4f6a !important;
+            font-weight: 600 !important;
+            font-size: 13.5px !important;
+            padding: 12px 20px !important;
+            border-radius: 0 !important;
+            border-bottom: 2px solid transparent !important;
+            font-family: 'DM Sans', sans-serif !important;
         }
 
         button[data-baseweb="tab"][aria-selected="true"] {
-            color: #f8fafc;
+            color: #e8f0ff !important;
+            border-bottom: 2px solid #3b82f6 !important;
         }
 
-        /* Dataframe */
+        [data-baseweb="tab-highlight"] { display: none !important; }
+
+        /* ── METRICS ── */
+        div[data-testid="stMetric"] {
+            background: #0a0e17;
+            border: 1px solid #161d2e;
+            border-radius: 10px;
+            padding: 16px 18px;
+        }
+
+        div[data-testid="stMetricValue"] {
+            font-size: 18px !important;
+            font-weight: 700 !important;
+            color: #dde5f5 !important;
+            font-family: 'DM Mono', monospace !important;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            font-size: 11px !important;
+            color: #3d4f6a !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.08em !important;
+            text-transform: uppercase !important;
+        }
+
+        /* ── DATAFRAME ── */
         .stDataFrame {
-            border-radius: 14px;
+            border-radius: 10px;
             overflow: hidden;
+            border: 1px solid #161d2e !important;
         }
 
-        div[data-testid="stDataFrame"] {
-            background: rgba(15, 23, 42, 0.9);
+        [data-testid="stDataFrame"] iframe {
+            border-radius: 10px;
         }
 
-        /* Expander */
+        /* ── EXPANDER ── */
         div[data-testid="stExpander"] {
-            background: rgba(15, 23, 42, 0.88);
-            border: 1px solid #263244;
-            border-radius: 14px;
+            background: #0a0e17;
+            border: 1px solid #161d2e !important;
+            border-radius: 10px;
         }
 
-        code {
-            color: #bfdbfe !important;
+        div[data-testid="stExpander"] summary {
+            color: #5d7099 !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
         }
 
+        /* ── CODE BLOCK ── */
+        .stCode, code, pre {
+            font-family: 'DM Mono', monospace !important;
+            background: #060810 !important;
+            border: 1px solid #161d2e !important;
+            border-radius: 8px !important;
+            font-size: 12.5px !important;
+        }
+
+        /* ── SPINNER ── */
+        div[data-testid="stSpinner"] p {
+            color: #5d7099 !important;
+            font-size: 13px !important;
+        }
+
+        /* ── FOOTER ── */
         .footer {
             text-align: center;
-            color: #64748b;
-            font-size: 13px;
-            margin-top: 28px;
+            color: #1e2a40;
+            font-size: 12px;
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid #0d1117;
+            font-family: 'DM Mono', monospace;
+            letter-spacing: 0.05em;
+        }
+
+        /* ── ALERT / WARNING / ERROR ── */
+        div[data-testid="stAlert"] {
+            border-radius: 10px !important;
+            border-width: 1px !important;
         }
     </style>
     """,
@@ -290,7 +440,7 @@ st.markdown(
 
 
 # =========================================================
-# SYSTEM LOADING
+# CACHE
 # =========================================================
 @st.cache_resource(show_spinner=False)
 def load_recommendation_system():
@@ -306,7 +456,6 @@ def build_manual_input(job_title: str, location: str, skills_text: str) -> dict:
         for skill in skills_text.split(",")
         if normalize_skill(skill)
     ]
-
     return {
         "job_title": process_job_title(job_title),
         "location": normalize_location(location),
@@ -336,7 +485,6 @@ def render_tags(items):
     if not items:
         st.markdown("<span class='muted'>No data available.</span>", unsafe_allow_html=True)
         return
-
     html = "".join([f"<span class='tag'>{item}</span>" for item in items])
     st.markdown(html, unsafe_allow_html=True)
 
@@ -345,42 +493,40 @@ def render_recommended_skills(items):
     if not items:
         st.info("No missing skills found.")
         return
-
     html = ""
-
     for item in items:
         rank = item.get("rank", "")
         skill = item.get("skill", "")
         score = item.get("score", "")
         frequency = item.get("frequency", "")
-
         html += (
-            f"<span class='tag-recommend'>"
-            f"<span class='tag-rank'>{rank}.</span>{skill}"
-            f" · score {score}"
-            f" · freq {frequency}"
+            f"<span class='tag-rec'>"
+            f"<span style='opacity:.45;margin-right:5px;'>#{rank}</span>{skill}"
+            f"<span style='opacity:.35;margin: 0 4px;'>·</span>"
+            f"<span style='opacity:.55;font-size:11px;'>{score} · {frequency}</span>"
             f"</span>"
         )
-
     st.markdown(html, unsafe_allow_html=True)
 
 
 def render_cleaned_input(cv_input):
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>Cleaned Input</div>", unsafe_allow_html=True)
-
+    st.markdown(
+        "<div class='card-desc'>Normalized information extracted from the CV or manual form.</div>",
+        unsafe_allow_html=True,
+    )
     col1, col2 = st.columns(2)
-
     with col1:
         st.metric("Job Title", cv_input.get("job_title", "N/A"))
-
     with col2:
         st.metric("Location", cv_input.get("location", "other"))
-
-    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>Current Skills</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#3d4f6a;margin-bottom:10px;'>Current Skills</div>",
+        unsafe_allow_html=True,
+    )
     render_tags(cv_input.get("skills", []))
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -388,27 +534,19 @@ def render_jobs_table(top_jobs):
     if not top_jobs:
         st.info("No similar jobs found.")
         return
-
     jobs_df = pd.DataFrame(top_jobs)
-
     if "score" in jobs_df.columns:
         jobs_df["score"] = jobs_df["score"].astype(float).round(4)
-
-    st.dataframe(
-        jobs_df,
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.dataframe(jobs_df, use_container_width=True, hide_index=True)
 
 
 def render_result(result):
     left, right = st.columns([1.25, 1])
-
     with left:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Top 5 Similar Jobs</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='card-subtitle'>Jobs are ranked by semantic similarity, title match, skill overlap, and location match.</div>",
+            "<div class='card-desc'>Ranked by semantic similarity, title match, skill overlap and location match.</div>",
             unsafe_allow_html=True,
         )
         render_jobs_table(result.get("top_5_similar_jobs", []))
@@ -418,7 +556,7 @@ def render_result(result):
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Top 10 Missing Skills</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='card-subtitle'>Skills already listed by the user are removed after normalization.</div>",
+            "<div class='card-desc'>Skills already listed by the user are removed after normalization.</div>",
             unsafe_allow_html=True,
         )
         render_recommended_skills(result.get("top_10_missing_skills", []))
@@ -427,16 +565,15 @@ def render_result(result):
     with st.expander("Scoring method", expanded=False):
         st.write("Search query")
         st.code(result.get("query", ""), language="text")
-
         st.markdown(
             """
-            Job similarity score:
+            **Job similarity score:**
 
-            `job_score = 0.50 * semantic_score + 0.25 * title_score + 0.15 * skill_overlap_score + 0.10 * location_score`
+            `job_score = 0.50 × semantic + 0.25 × title + 0.15 × skill_overlap + 0.10 × location`
 
-            Skill ranking score:
+            **Skill ranking score:**
 
-            `skill_score = 0.80 * weighted_job_score + 0.20 * frequency_score`
+            `skill_score = 0.80 × weighted_job_score + 0.20 × frequency_score`
             """
         )
 
@@ -445,9 +582,7 @@ def process_and_display(cv_input, index, metadata, model, retrieve_jobs, rerank_
     if not cv_input.get("job_title"):
         st.error("Job title is empty after cleaning. Please provide a clearer job title.")
         return
-
     render_cleaned_input(cv_input)
-
     with st.spinner("Finding similar jobs and recommending missing skills..."):
         result = run_recommend(
             cv_input=cv_input,
@@ -458,60 +593,38 @@ def process_and_display(cv_input, index, metadata, model, retrieve_jobs, rerank_
             rerank_jobs=rerank_jobs,
             top_skills=top_skills,
         )
-
     render_result(result)
 
 
 # =========================================================
-# SIDEBAR
+# LOAD BACKEND
 # =========================================================
-with st.sidebar:
-    st.markdown("### Configuration")
-
-    retrieve_jobs = st.slider(
-        "Retrieved jobs",
-        min_value=50,
-        max_value=500,
-        value=200,
-        step=50,
-    )
-
-    rerank_jobs = st.slider(
-        "Reranked jobs",
-        min_value=10,
-        max_value=100,
-        value=50,
-        step=10,
-    )
-
-    top_skills = st.slider(
-        "Recommended skills",
-        min_value=5,
-        max_value=20,
-        value=10,
-        step=1,
-    )
-
-    st.divider()
-
-    st.markdown("### System")
-    st.caption("Local FAISS index, Sentence Transformer, hybrid reranking")
-
-    if st.button("Reload system", use_container_width=True):
-        st.cache_resource.clear()
-        st.success("Cache cleared. Refresh the page to reload.")
+try:
+    with st.spinner("Loading recommendation system..."):
+        index, metadata, model = load_recommendation_system()
+    loaded_message = f"{len(metadata):,} job records"
+except Exception as e:
+    st.error(f"Failed to load system: {e}")
+    st.stop()
 
 
 # =========================================================
-# HEADER
+# HERO
 # =========================================================
 st.markdown(
-    """
-    <div class="app-header">
-        <div class="app-title">Skill Recommendation System</div>
-        <div class="app-description">
-            Recommend missing skills by comparing the user's target role and current skills
-            with similar jobs from the job market dataset.
+    f"""
+    <div class="hero">
+        <div class="hero-eyebrow">Skill Recommendation System</div>
+        <div class="hero-title">Career Intelligence<br>Powered by Vector Search</div>
+        <div class="hero-desc">
+            Combine job market data, sentence embeddings, and hybrid reranking
+            to surface the skills that matter most for your target career path.
+        </div>
+        <div class="hero-pills">
+            <span class="pill"><span class="pill-dot"></span>System ready</span>
+            <span class="pill">{loaded_message}</span>
+            <span class="pill">FAISS · Sentence Embeddings</span>
+            <span class="pill">Power BI Dashboard</span>
         </div>
     </div>
     """,
@@ -520,69 +633,96 @@ st.markdown(
 
 
 # =========================================================
-# LOAD BACKEND
+# POWER BI DASHBOARD
 # =========================================================
-try:
-    with st.spinner("Loading system..."):
-        index, metadata, model = load_recommendation_system()
+st.markdown(
+    """
+    <div class="sec-header">
+        <div class="sec-label">Market Intelligence</div>
+        <div class="sec-title">Job Market Dashboard</div>
+        <div class="sec-desc">
+            Market-level insights from Power BI — job title demand, top skills,
+            location distribution, and role-specific skill trends.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+if POWERBI_EMBED_URL and POWERBI_EMBED_URL != "PASTE_POWER_BI_EMBED_LINK_HERE":
+    st.markdown("<div class='db-wrap'>", unsafe_allow_html=True)
+    st.components.v1.iframe(POWERBI_EMBED_URL, height=820, scrolling=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+else:
     st.markdown(
-        f"""
-        <div class="status-ready">
-            System ready. Loaded <b>{len(metadata):,}</b> job records.
+        """
+        <div class="warn-box">
+            Power BI embed link has not been configured yet.
+            Paste your <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:4px;">reportEmbed</code>
+            URL into the <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:4px;">POWERBI_EMBED_URL</code>
+            variable at the top of <code style="background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:4px;">app.py</code>.
         </div>
         """,
         unsafe_allow_html=True,
     )
-except Exception as e:
-    st.error(f"Failed to load system: {e}")
-    st.stop()
+
+st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
 
 # =========================================================
-# MAIN TABS
+# RECOMMENDATION SECTION
 # =========================================================
-tab_cv, tab_manual, tab_dashboard, tab_about = st.tabs(
-    ["CV Upload", "Manual Input", "Dashboard", "About"]
+st.markdown(
+    """
+    <div class="sec-header">
+        <div class="sec-label">Recommendation Engine</div>
+        <div class="sec-title">Skill Recommendation</div>
+        <div class="sec-desc">
+            Upload a CV or enter job information manually to find similar roles
+            and discover the skills you should prioritize.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
+
+tab_cv, tab_manual, tab_about = st.tabs(["CV Upload", "Manual Input", "About"])
 
 
 # =========================================================
 # CV UPLOAD TAB
 # =========================================================
 with tab_cv:
-    input_col, guide_col = st.columns([1.05, 0.95])
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+    left, right = st.columns([1.05, 0.95])
 
-    with input_col:
+    with left:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Upload CV</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div class='card-subtitle'>Upload a PDF CV. The system will extract role, location, and skills.</div>",
+            "<div class='card-desc'>Upload a PDF CV. The system extracts the target role, location and current skills.</div>",
             unsafe_allow_html=True,
         )
-
         uploaded_file = st.file_uploader(
             "PDF file",
             type=["pdf"],
             label_visibility="collapsed",
         )
-
         analyze_cv = st.button(
             "Analyze and Recommend",
             type="primary",
             use_container_width=True,
         )
-
         st.markdown("</div>", unsafe_allow_html=True)
 
-    with guide_col:
+    with right:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Expected Output</div>", unsafe_allow_html=True)
         st.markdown(
             """
-            <div class="muted">
-            The result includes cleaned input, the five most similar jobs,
-            and the ten missing skills that the user should consider learning.
+            <div class="muted" style="line-height:1.75">
+                The result includes normalized input, the five most similar jobs,
+                and the top missing skills the user should consider learning.
             </div>
             """,
             unsafe_allow_html=True,
@@ -597,17 +737,15 @@ with tab_cv:
                 with st.spinner("Reading and extracting CV information..."):
                     tmp_path = save_uploaded_pdf_to_temp(uploaded_file)
                     cv_input = extract_and_prepare_cv(tmp_path)
-
                 process_and_display(
                     cv_input=cv_input,
                     index=index,
                     metadata=metadata,
                     model=model,
-                    retrieve_jobs=retrieve_jobs,
-                    rerank_jobs=rerank_jobs,
-                    top_skills=top_skills,
+                    retrieve_jobs=200,
+                    rerank_jobs=50,
+                    top_skills=10,
                 )
-
             except Exception as e:
                 st.error(f"Error: {e}")
 
@@ -616,39 +754,28 @@ with tab_cv:
 # MANUAL INPUT TAB
 # =========================================================
 with tab_manual:
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
     st.markdown("<div class='card'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>Manual Input</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div class='card-subtitle'>Enter the target role, location, and current skills manually.</div>",
+        "<div class='card-desc'>Enter the target role, preferred location and current skills manually.</div>",
         unsafe_allow_html=True,
     )
-
     col1, col2 = st.columns(2)
-
     with col1:
-        job_title = st.text_input(
-            "Target job title",
-            placeholder="Backend Developer",
-        )
-
+        job_title = st.text_input("Target job title", placeholder="Backend Developer")
     with col2:
-        location = st.text_input(
-            "Location",
-            placeholder="united states, vietnam, remote",
-        )
-
+        location = st.text_input("Location", placeholder="united states, vietnam, remote")
     skills_text = st.text_area(
         "Current skills",
         placeholder="git, node js, sql",
-        height=120,
+        height=110,
     )
-
     analyze_manual = st.button(
         "Recommend Skills",
         type="primary",
         use_container_width=True,
     )
-
     st.markdown("</div>", unsafe_allow_html=True)
 
     if analyze_manual:
@@ -658,87 +785,49 @@ with tab_manual:
                 location=location,
                 skills_text=skills_text,
             )
-
             process_and_display(
                 cv_input=cv_input,
                 index=index,
                 metadata=metadata,
                 model=model,
-                retrieve_jobs=retrieve_jobs,
-                rerank_jobs=rerank_jobs,
-                top_skills=top_skills,
+                retrieve_jobs=200,
+                rerank_jobs=50,
+                top_skills=10,
             )
-
         except Exception as e:
             st.error(f"Error: {e}")
-
-
-# =========================================================
-# DASHBOARD TAB
-# =========================================================
-with tab_dashboard:
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>Dashboard</div>", unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="muted">
-        This section can be used to embed a Power BI dashboard after the report is published.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    powerbi_iframe_url = st.text_input(
-        "Power BI iframe URL",
-        placeholder="Paste Power BI embed link here",
-    )
-
-    if powerbi_iframe_url:
-        st.components.v1.iframe(
-            powerbi_iframe_url,
-            height=760,
-            scrolling=True,
-        )
-    else:
-        st.markdown(
-            """
-            <div class="status-muted">
-                No dashboard link provided.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # =========================================================
 # ABOUT TAB
 # =========================================================
 with tab_about:
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
     st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>About</div>", unsafe_allow_html=True)
-
+    st.markdown("<div class='card-title'>About this system</div>", unsafe_allow_html=True)
     st.markdown(
         """
-        This system recommends missing skills using job market data.
+        This application combines job market data, vector search and hybrid reranking
+        to recommend missing skills for a target career path.
 
-        Workflow:
+        **Main workflow:**
 
-        1. Receive job title, location, and current skills.
-        2. Normalize and clean the input.
-        3. Encode the search query using a sentence embedding model.
+        1. Receive input from CV upload or manual form.
+        2. Extract and normalize job title, location and skills.
+        3. Encode the query using a sentence embedding model.
         4. Retrieve similar jobs using FAISS.
-        5. Rerank jobs using semantic similarity, title similarity, skill overlap, and location match.
+        5. Rerank jobs using semantic similarity, title similarity, skill overlap and location match.
         6. Aggregate skills from similar jobs.
         7. Remove skills the user already has.
-        8. Return the most similar jobs and the recommended missing skills.
+        8. Return similar jobs, missing skills and market-level Power BI insights.
         """
     )
-
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+# =========================================================
+# FOOTER
+# =========================================================
 st.markdown(
     "<div class='footer'>Skill Recommendation System</div>",
     unsafe_allow_html=True,
