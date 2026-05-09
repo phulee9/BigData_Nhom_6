@@ -1,15 +1,63 @@
+# Python environment
 venv/
+.venv/
+env/
+ENV/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# Environment config
 .env
+.env.*
+!.env.example
+
+# Local data folder
+data/
+
+# Raw / processed data files
 *.csv
-.venv
-linkedin_profile
-linkedin_jobs.csv
-*.index
+*.tsv
+*.xlsx
+*.xls
+*.parquet
+*.json
+*.jsonl
+
+# Embedding / FAISS / model artifacts
 *.npy
-airflow/logs/
+*.npz
+*.index
+*.faiss
+*.faiss.index
 *.bin
 *.pkl
-*.json
+*.pickle
+*.joblib
+*.pt
+*.pth
+*.safetensors
+
+# MinIO / runtime / temp artifacts
+data/temp/
+data/runtime_index/
+runtime_index/
+
+# Logs
+logs/
+*.log
+airflow/logs/
+
+# IDE
 .vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Crawler / LinkedIn local output
+linkedin_profile/
+linkedin_jobs.csv
