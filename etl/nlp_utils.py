@@ -13,6 +13,7 @@ for pkg in ["wordnet", "omw-1.4", "stopwords"]:
         nltk.download(pkg, quiet=True)
 
 lemmatizer = WordNetLemmatizer()
+lemmatizer.lemmatize("warmup") # Pre-load WordNet to avoid race conditions in ThreadPoolExecutor
 STOP_WORDS = set(stopwords.words("english"))
 
 # Đường dẫn whitelist
@@ -111,13 +112,14 @@ def get_whitelist() -> set:
     return _WHITELIST
 
 
-# Lazy load spaCy
+import spacy
+
+# Load spaCy safely in main thread
 _nlp = None
 
 def get_nlp():
     global _nlp
     if _nlp is None:
-        import spacy
         try:
             _nlp = spacy.load("en_core_web_sm")
         except OSError:
@@ -125,6 +127,9 @@ def get_nlp():
             download("en_core_web_sm")
             _nlp = spacy.load("en_core_web_sm")
     return _nlp
+
+# Pre-load the model to prevent race conditions in ThreadPoolExecutor
+get_nlp()
 
 
 def process_job_title(text: str) -> str:

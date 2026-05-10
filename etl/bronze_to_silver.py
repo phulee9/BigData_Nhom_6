@@ -69,8 +69,11 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     print("  job_skills → whitelist filter + lemmatize")
 
     rows = df[["job_title", "job_skills"]].to_dict("records")
-    with Pool(cpu_count()) as p:
-        results = p.map(process_row, rows)
+    from concurrent.futures import ProcessPoolExecutor
+    from tqdm import tqdm
+    with ProcessPoolExecutor(max_workers=cpu_count()) as p:
+        # NOTE: ProcessPoolExecutor avoids the GIL, dramatically speeding up spaCy NER/NLTK processing across all cores.
+        results = list(tqdm(p.map(process_row, rows), total=len(rows), desc="Cleaning data (Multi-process)"))
 
     df["job_title"], df["job_skills"] = zip(*results)
     df["title_skills"] = df["job_title"] + " " + df["job_skills"]
@@ -82,6 +85,11 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
     print(f"Sau clean        : {len(df):,} rows")
     print(f"Unique job_title : {df['job_title'].nunique():,}")
+    
+    local_backup_path = "silver_jobs_cleaned_local.csv"
+    print(f"Luu ban sao local tai: {local_backup_path}")
+    df.to_csv(local_backup_path, index=False, encoding="utf-8")
+    
     return df
 
 

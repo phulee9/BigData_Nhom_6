@@ -120,3 +120,64 @@ def print_recommendation(result: dict):
         print(f"    {i}. {item['skill']} (xuat hien trong {item['count']}/{total} job tuong tu)")
 
     print(LINE)
+
+
+def hybrid_recommend_skills_rrf(
+    cv_skills: list,
+    job_title: str,
+    level: str,
+    index,
+    df: pd.DataFrame,
+    tfidf_model,
+    top_k: int = 10,
+    rrf_k: int = 60
+) -> dict:
+    """
+    Kết hợp FAISS Embedding (Semantic) và TF-IDF (Keyword) bằng Reciprocal Rank Fusion (RRF).
+    """
+    # 1. Semantic Search
+    semantic_result = recommend_skills(cv_skills, job_title, index, df, top_skills=50)
+    semantic_skills = [s['skill'] for s in semantic_result["skills_goi_y"]]
+    
+    # 2. TF-IDF Search
+    tfidf_result = tfidf_model.query(job_title, cv_skills, level=level, top_k=50)
+    tfidf_skills = [s['skill'] for s in tfidf_result]
+    
+    # 3. Tính điểm RRF
+    rrf_scores = {}
+    for rank, skill in enumerate(semantic_skills):
+        rrf_scores[skill] = rrf_scores.get(skill, 0.0) + 1.0 / (rrf_k + rank + 1)
+        
+    for rank, skill in enumerate(tfidf_skills):
+        rrf_scores[skill] = rrf_scores.get(skill, 0.0) + 1.0 / (rrf_k + rank + 1)
+        
+    # Sắp xếp lấy top-K
+    sorted_skills = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    
+    return {
+        "vi_tri_ung_tuyen"   : job_title,
+        "level"              : level,
+        "job_titles_gan_nhat": semantic_result["job_titles_gan_nhat"],
+        "skills_da_co"       : cv_skills,
+        "skills_goi_y"       : [{"skill": s, "score": sc} for s, sc in sorted_skills],
+    }
+
+def print_hybrid_recommendation(result: dict):
+    LINE  = "=" * 50
+    print(f"\n{LINE}")
+    print("  KET QUA HYBRID RECOMMENDATION (FAISS + TF-IDF RRF)")
+    print(LINE)
+    print(f"  Vi tri : {result['vi_tri_ung_tuyen']} (Level: {result.get('level', 'N/A')})")
+
+    print(f"\n  Job titles gan nhat (tu FAISS):")
+    for i, t in enumerate(result["job_titles_gan_nhat"], 1):
+        print(f"    {i}. {t}")
+
+    print(f"\n  Skills da co ({len(result['skills_da_co'])}):")
+    for s in result["skills_da_co"]:
+        print(f"    v {s}")
+
+    print(f"\n  Top Skills nen hoc them (RRF Scoring):")
+    for i, item in enumerate(result["skills_goi_y"], 1):
+        print(f"    {i}. {item['skill']} (RRF Score: {item['score']:.4f})")
+    print(LINE)

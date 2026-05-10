@@ -70,8 +70,9 @@ def clean_new_jobs(df_new: pd.DataFrame) -> pd.DataFrame:
     # Clean job_title và job_skills bằng multiprocessing
     print(f"[4/5] Clean {len(df_new):,} jobs moi...")
     rows = df_new[["job_title", "job_skills"]].to_dict("records")
-    with Pool(cpu_count()) as p:
-        results = p.map(process_row, rows)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=cpu_count()) as p:
+        results = list(p.map(process_row, rows))
 
     df_new["job_title"], df_new["job_skills"] = zip(*results)
     df_new["title_skills"] = df_new["job_title"] + " " + df_new["job_skills"]
