@@ -6,3 +6,9 @@ numpy
 torch
 sentence-transformers
 faiss-cpu
+sqlalchemy
+psycopg2-binary
+groq
+PyMuPDF
+python-dotenv
+streamlit

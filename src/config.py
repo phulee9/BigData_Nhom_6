@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Đọc biến môi trường từ file .env
@@ -18,6 +20,10 @@ LOCAL_RAW_DIR = "data/raw"
 LOCAL_RUNTIME_INDEX_DIR = "data/runtime_index"
 LOCAL_TEMP_DIR = "data/temp"
 
+LOCAL_CRAWLER_RAW_DIR = Path(
+    os.getenv("LOCAL_CRAWLER_RAW_DIR", "data/raw/crawler")
+)
+
 
 # File raw Kaggle trên local
 LOCAL_KAGGLE_JOB_POSTINGS = (
@@ -29,7 +35,7 @@ LOCAL_KAGGLE_JOB_SKILLS = (
 )
 
 
-# Các vùng trên MinIO
+# Các vùng cố định trên MinIO
 MINIO_ZONES = [
     "bronze/kaggle/raw/",
     "bronze/crawler/raw/",
@@ -40,13 +46,10 @@ MINIO_ZONES = [
     "silver/kaggle/04_industry_clean/",
     "silver/kaggle/05_final_clean/",
 
-    "silver/crawler/01_normalized/",
-    "silver/crawler/02_basic_clean/",
-    "silver/crawler/03_preclassified/",
-    "silver/crawler/04_industry_clean/",
-    "silver/crawler/05_final_clean/",
+    "silver/crawler/",
 
     "gold/kaggle/encode/",
+    "gold/crawler/batches/",
     "gold/crawler/encode/",
 
     "taxonomy/",
@@ -56,7 +59,7 @@ MINIO_ZONES = [
 ]
 
 
-# Đường dẫn Bronze
+# Đường dẫn Bronze Kaggle
 BRONZE_KAGGLE_JOB_POSTINGS = (
     "bronze/kaggle/raw/linkedin_job_postings.csv"
 )
@@ -85,28 +88,6 @@ SILVER_KAGGLE_INDUSTRY_CLEAN = (
 
 SILVER_KAGGLE_FINAL_CLEAN = (
     "silver/kaggle/05_final_clean/jobs_final_clean.parquet"
-)
-
-
-# Đường dẫn Silver Crawler
-SILVER_CRAWLER_NORMALIZED = (
-    "silver/crawler/01_normalized/jobs_normalized.parquet"
-)
-
-SILVER_CRAWLER_BASIC_CLEAN = (
-    "silver/crawler/02_basic_clean/jobs_basic_clean.parquet"
-)
-
-SILVER_CRAWLER_PRECLASSIFIED = (
-    "silver/crawler/03_preclassified/jobs_preclassified.parquet"
-)
-
-SILVER_CRAWLER_INDUSTRY_CLEAN = (
-    "silver/crawler/04_industry_clean/jobs_industry_clean.parquet"
-)
-
-SILVER_CRAWLER_FINAL_CLEAN = (
-    "silver/crawler/05_final_clean/jobs_final_clean.parquet"
 )
 
 
@@ -143,21 +124,97 @@ GOLD_KAGGLE_FULL_INDEX = (
     "gold/kaggle/encode/full.faiss.index"
 )
 
-# Đường dẫn Gold Crawler
-GOLD_CRAWLER_JOBS_FOR_ENCODING = (
-    "gold/crawler/encode/jobs_for_encoding.parquet"
-)
 
-GOLD_CRAWLER_EMBEDDINGS = (
-    "gold/crawler/encode/embeddings.npy"
-)
+# Hàm lấy file crawler mới nhất ở local
+def get_latest_crawler_file() -> Path:
+    # Lấy file json mới nhất trong thư mục data/raw/crawler
+    json_files = sorted(
+        LOCAL_CRAWLER_RAW_DIR.glob("*.json"),
+        key=lambda file_path: file_path.stat().st_mtime,
+        reverse=True,
+    )
 
-GOLD_CRAWLER_FAISS_INDEX = (
-    "gold/crawler/encode/faiss.index"
-)
+    if not json_files:
+        raise FileNotFoundError(
+            f"Không tìm thấy file .json trong {LOCAL_CRAWLER_RAW_DIR}"
+        )
 
+    return json_files[0]
+
+
+def get_batch_name_from_file(file_path: Path) -> str:
+    # Lấy batch name từ tên file
+    return file_path.stem
+
+
+# Đường dẫn Bronze Crawler theo batch
+def bronze_crawler_raw(batch_name: str) -> str:
+    return f"bronze/crawler/raw/{batch_name}/jobs_raw.json"
+
+
+# Đường dẫn Silver Crawler theo batch
+def silver_crawler_normalized(batch_name: str) -> str:
+    return f"silver/crawler/{batch_name}/01_normalized/jobs_normalized.parquet"
+
+
+def silver_crawler_basic_clean(batch_name: str) -> str:
+    return f"silver/crawler/{batch_name}/02_basic_clean/jobs_basic_clean.parquet"
+
+
+def silver_crawler_preclassified(batch_name: str) -> str:
+    return f"silver/crawler/{batch_name}/03_preclassified/jobs_preclassified.parquet"
+
+
+def silver_crawler_industry_clean(batch_name: str) -> str:
+    return f"silver/crawler/{batch_name}/04_industry_clean/jobs_industry_clean.parquet"
+
+
+def silver_crawler_final_clean(batch_name: str) -> str:
+    return f"silver/crawler/{batch_name}/05_final_clean/jobs_final_clean.parquet"
+
+
+# Đường dẫn Gold Crawler theo batch
+def gold_crawler_jobs_for_encoding_batch(batch_name: str) -> str:
+    return f"gold/crawler/batches/{batch_name}/jobs_for_encoding.parquet"
+
+
+# Đường dẫn Gold Crawler chính dùng cho recommendation
 GOLD_CRAWLER_METADATA = (
     "gold/crawler/encode/metadata.parquet"
+)
+
+GOLD_CRAWLER_TITLE_EMBEDDINGS = (
+    "gold/crawler/encode/title_embeddings.npy"
+)
+
+GOLD_CRAWLER_SKILLS_EMBEDDINGS = (
+    "gold/crawler/encode/skills_embeddings.npy"
+)
+
+GOLD_CRAWLER_FULL_EMBEDDINGS = (
+    "gold/crawler/encode/full_embeddings.npy"
+)
+
+GOLD_CRAWLER_TITLE_INDEX = (
+    "gold/crawler/encode/title.faiss.index"
+)
+
+GOLD_CRAWLER_SKILLS_INDEX = (
+    "gold/crawler/encode/skills.faiss.index"
+)
+
+GOLD_CRAWLER_FULL_INDEX = (
+    "gold/crawler/encode/full.faiss.index"
+)
+
+
+# Đường dẫn runtime index local
+LOCAL_KAGGLE_RUNTIME_INDEX_DIR = (
+    f"{LOCAL_RUNTIME_INDEX_DIR}/kaggle"
+)
+
+LOCAL_CRAWLER_RUNTIME_INDEX_DIR = (
+    f"{LOCAL_RUNTIME_INDEX_DIR}/crawler"
 )
 
 
@@ -168,7 +225,7 @@ TAXONOMY_SKILL = "taxonomy/skill_taxonomy.parquet"
 TAXONOMY_SKILL_ALIAS = "taxonomy/skill_alias.parquet"
 
 
-# Đường dẫn Audit
+# Đường dẫn Audit Kaggle
 AUDIT_KAGGLE_LOW_CONFIDENCE = (
     "audit/kaggle/low_confidence_jobs.parquet"
 )
@@ -181,17 +238,19 @@ AUDIT_KAGGLE_UNMAPPED_SKILLS = (
     "audit/kaggle/unmapped_skills.parquet"
 )
 
-AUDIT_CRAWLER_LOW_CONFIDENCE = (
-    "audit/crawler/low_confidence_jobs.parquet"
-)
 
-AUDIT_CRAWLER_UNMAPPED_TITLES = (
-    "audit/crawler/unmapped_titles.parquet"
-)
+# Đường dẫn Audit Crawler theo batch
+def audit_crawler_low_confidence(batch_name: str) -> str:
+    return f"audit/crawler/{batch_name}/low_confidence_jobs.parquet"
 
-AUDIT_CRAWLER_UNMAPPED_SKILLS = (
-    "audit/crawler/unmapped_skills.parquet"
-)
+
+def audit_crawler_unmapped_titles(batch_name: str) -> str:
+    return f"audit/crawler/{batch_name}/unmapped_titles.parquet"
+
+
+def audit_crawler_unmapped_skills(batch_name: str) -> str:
+    return f"audit/crawler/{batch_name}/unmapped_skills.parquet"
+
 
 # Cấu hình embedding
 EMBEDDING_MODEL = os.getenv(
@@ -205,4 +264,35 @@ EMBEDDING_BATCH_SIZE = int(
 
 NORMALIZE_EMBEDDINGS = (
     os.getenv("NORMALIZE_EMBEDDINGS", "true").lower() == "true"
+)
+
+# PostgreSQL config for Power BI mart
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "bigdata")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+
+POSTGRES_URL = (
+    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+)
+
+# PostgreSQL config for Power BI mart
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "bigdata")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
+
+POSTGRES_URL = (
+    f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
+    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+)
+
+# Groq config for CV extraction
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv(
+    "GROQ_MODEL",
+    "llama-3.3-70b-versatile",
 )
