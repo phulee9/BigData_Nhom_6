@@ -49,6 +49,7 @@ MINIO_ZONES = [
     "silver/crawler/",
 
     "gold/kaggle/encode/",
+    "gold/kaggle/tfidf/",
     "gold/crawler/batches/",
     "gold/crawler/encode/",
 
@@ -122,6 +123,10 @@ GOLD_KAGGLE_SKILLS_INDEX = (
 
 GOLD_KAGGLE_FULL_INDEX = (
     "gold/kaggle/encode/full.faiss.index"
+)
+
+GOLD_KAGGLE_TFIDF_MATRIX = (
+    "gold/kaggle/tfidf/tfidf_matrix.parquet"
 )
 
 
