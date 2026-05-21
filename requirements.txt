@@ -11,4 +11,5 @@ psycopg2-binary
 groq
 PyMuPDF
 python-dotenv
+rank-bm25
 streamlit

@@ -49,7 +49,7 @@ MINIO_ZONES = [
     "silver/crawler/",
 
     "gold/kaggle/encode/",
-    "gold/kaggle/tfidf/",
+    "gold/kaggle/bm25/",
     "gold/crawler/batches/",
     "gold/crawler/encode/",
 
@@ -125,8 +125,8 @@ GOLD_KAGGLE_FULL_INDEX = (
     "gold/kaggle/encode/full.faiss.index"
 )
 
-GOLD_KAGGLE_TFIDF_MATRIX = (
-    "gold/kaggle/tfidf/tfidf_matrix.parquet"
+GOLD_KAGGLE_BM25_MODEL = (
+    "gold/kaggle/bm25/bm25_model.pkl"
 )
 
 
