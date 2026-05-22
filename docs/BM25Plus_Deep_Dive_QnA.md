@@ -1,70 +1,57 @@
-# TÀI LIỆU PHẢN BIỆN CHUYÊN SÂU: CẤU PHẦN BM25+ (BM25PLUS) TRONG HỆ THỐNG RECOMMENDATION
+# TÀI LIỆU PHẢN BIỆN CHUYÊN SÂU: CẤU PHẦN BM25+ (UNIFIED ROLE MODEL)
 
-Tài liệu này được biên soạn dưới dạng bộ câu hỏi **Stress-test** từ Hội đồng chấm đồ án, đi kèm câu trả lời chuẩn kiến trúc hệ thống nhằm giúp sinh viên bảo vệ thành công cấu phần tìm kiếm và gợi ý kỹ năng.
+Tài liệu này tổng hợp logic cốt lõi từ các module `model_bm25.py`, `01_build_bm25.py` và `02_bm25_recommend.py`. Đây là "vũ khí" để giải trình tính đúng đắn và tối ưu của hệ thống trước Hội đồng.
+---
+
+## 💎 PHẦN 1: CHIẾN THUẬT TOKENIZATION & VIRTUAL DOCUMENTS
+
+### ❓ Câu 1: Tại sao lại gộp nhiều Job thành một "Unified Document" thay vì để riêng lẻ?
+**Trả lời:** Đây là kỹ thuật **Document Aggregation** nhằm mục đích **Triệt tiêu nhiễu (Denoising)**.
+* **Vấn đề của Item-based:** Từng tin tuyển dụng riêng lẻ thường viết rất tùy hứng (quá ngắn hoặc quá dài), dẫn đến điểm số BM25 bị lệch.
+* **Giải pháp Unified Role:** Khi gộp tất cả Job có cùng `job_title_canonical` thành một tài liệu duy nhất cho một **Role**, chúng ta tạo ra một "Profile chuẩn". Điều này giúp thuật toán tập trung vào phân phối xác suất của kỹ năng trên toàn bộ thị trường thay vì bị ảnh hưởng bởi một vài tin tuyển dụng cá biệt.
+
+### ❓ Câu 2: Giải thích cơ chế lặp lại từ khóa (Token Weighting) trong code?
+**Trả lời:** Hệ thống sử dụng cơ chế **Frequency-based Importance Weighting** thủ công để hỗ trợ BM25+:
+* **Role Name Boosting (`ROLE_NAME_REPEAT = 2`):** Nhân đôi tên Role giúp tạo "điểm neo" (Anchor). Khi người dùng nhập tên Role, thuật toán sẽ nhận diện chính xác phân vùng dữ liệu đó ngay lập tức.
+* **Skill Weighting (`skill * count`):** Trong code `tokens.extend(skill.split() * count)`, `count` chính là số lần kỹ năng đó xuất hiện thực tế.
+    * *Ví dụ:* Nếu Role "Data Scientist" có 100 Jobs và 90 Jobs yêu cầu "Python", từ "Python" sẽ xuất hiện 90 lần. BM25+ sẽ tự hiểu đây là kỹ năng trọng tâm (Core Skill).
+---
+
+## 🏗️ PHẦN 2: QUY TRÌNH TRIỂN KHAI & HIỆU NĂNG
+
+### ❓ Câu 3: Quy trình vận hành từ Offline sang Online diễn ra như thế nào?
+**Trả lời:** Hệ thống tuân thủ kiến trúc **Batch-Processing Pipeline**:
+1. **Giai đoạn Build Model (`01_build_bm25.py`):** Đọc dữ liệu từ MinIO, thực hiện tính toán tần suất, khởi tạo `BM25Plus` và lưu toàn bộ trạng thái vào file `pickle`.
+2. **Giai đoạn Deployment:** Upload file pickle lên MinIO làm phiên bản model chính thức (`GOLD_KAGGLE_BM25_MODEL`).
+3. **Giai đoạn Inference (`02_bm25_recommend.py`):** Khi hệ thống chạy, nó không tính toán lại từ đầu mà chỉ **deserialize** file pickle. Điều này giúp tốc độ Query đạt mức mili-giây, đáp ứng yêu cầu của một hệ thống Real-time Recommendation.
+
+### ❓ Câu 4: Tại sao lại áp dụng ngưỡng lọc `valid_roles >= 3`?
+**Trả lời:** Để đảm bảo **Ý nghĩa thống kê (Statistical Significance)**. Những Role chỉ xuất hiện 1-2 lần thường là dữ liệu lỗi hoặc các vị trí quá đặc thù, không mang tính đại diện. Việc lọc này giúp bộ gợi ý kỹ năng luôn bám sát xu hướng thực tế của thị trường lao động.
+---
+
+## 🤝 PHẦN 3: BẢN CHẤT TOÁN HỌC (DEEP DIVE)
+
+### ❓ Câu 5: Công thức tính `recommend_score` có gì đặc biệt?
+**Trả lời:** Đây là sự kết hợp giữa **Lexical Similarity** và **Local Density**:
+$$Skill\_Score = \sum_{Role \in TopK} \left( BM25\_Score(Query, Role) \times \frac{Skill\_Count_{Role}}{Total\_Jobs_{Role}} \right)$$
+* Hệ thống không chỉ nhìn vào việc Role đó giống bạn bao nhiêu (`bm25_score`), mà còn nhìn vào việc kỹ năng đó "phổ biến" mức nào trong Role đó (`count / job_count`).
+* Điều này giúp loại bỏ trường hợp một kỹ năng hiếm gặp tình cờ xuất hiện trong một Role có điểm tương đồng thấp.
+
+### ❓ Câu 6: Tại sao chọn BM25+ thay vì BM25 truyền thống hay TF-IDF?
+**Trả lời:** * **TF-IDF:** Không có cơ chế bão hòa tần suất và không kiểm soát được độ dài văn bản (Length Normalization).
+* **BM25 truyền thống:** Khi tài liệu cực dài (như Unified Document của chúng ta), BM25 dễ bị rơi vào trạng thái bão hòa điểm số.
+* **BM25+:** Bổ sung tham số $\delta$ (delta) giúp đảm bảo điểm số luôn tăng (tuyến tính nhẹ) theo tần suất kỹ năng, giúp phân cấp rõ rệt giữa các kỹ năng "quan trọng" và "rất quan trọng".
 
 ---
 
-## 💎 PHẦN 1: BẢN CHẤT TOÁN HỌC & THUẬT TOÁN
+## 🛠️ PHẦN 4: KHẢ NĂNG MỞ RỘNG
 
-### ❓ Câu 1: Tại sao trong công thức BM25+ lại xuất hiện tham số $\delta$ (delta)?
-**Bản chất:** Giải quyết lỗi bão hòa tần suất của BM25 truyền thống khi áp dụng vào tài liệu cực dài (Long Documents).
+### ❓ Câu 7: Hệ thống xử lý kỹ năng người dùng đã biết như thế nào?
+**Trả lời:** Sử dụng **Negative Filtering**. Toàn bộ `user_skills` sẽ được đưa vào một `set` để đối chiếu. Sau khi tính toán xong danh sách gợi ý, hệ thống sẽ thực hiện phép trừ tập hợp để đảm bảo 100% kết quả trả về là những kỹ năng người dùng **thực sự thiếu hụt**.
 
-*   **Vấn đề:** Trong BM25 cũ, khi $TF$ tiến đến vô cùng, điểm số bị tiệm cận về một hằng số. Khi gộp hàng ngàn Job thành một **Virtual Unified Document**, lỗi này làm mất sự phân cấp giữa kỹ năng chính và phụ.
-*   **Giải pháp:** **BM25+** bổ sung $\delta$ (thường $= 1.0$) để thiết lập một cận dưới tuyến tính. Điều này đảm bảo mối liên hệ giữa tần suất xuất hiện và điểm số khuyến nghị luôn giữ vững tính đơn điệu, không bao giờ bị bão hòa dù văn bản dài đến đâu.
-
-### ❓ Câu 2: Ý nghĩa của tham số $k_1$ và $b$ trong việc tính điểm?
-*   **$k_1$ (Term Frequency Saturation):** Điều phối mức độ ảnh hưởng của tần suất. $k_1$ càng cao, hệ thống càng ưu tiên những kỹ năng xuất hiện lặp lại nhiều lần trong Role.
-*   **$b$ (Document Length Normalization):** Điều phối mức độ phạt độ dài văn bản.
-    > **Cảnh báo:** Nếu tăng $b = 1$ (phạt tối đa), hệ thống sẽ thiên vị các Role ngách (văn bản ngắn) và kéo tụt điểm của các Role phổ biến (văn bản dài). Cấu hình $b = 0.75$ là điểm cân bằng hoàn hảo.
----
-
-## 🏗️ PHẦN 2: KIẾN TRÚC "VIRTUAL UNIFIED DOCUMENT" (GOM CỤM ROLE)
-
-### ❓ Câu 3: Việc lặp lại từ khóa (Role Name/Skill) có phải là "gian lận" dữ liệu?
-Không, đây là cơ chế **Tái cấu trúc phân phối xác suất (Probability Distribution Resampling)**.
-*   **Lặp tên Role:** Tạo "lực hút" (Keyword Anchor) để BM25+ nhận diện phân vùng Role ngay khi người dùng nhập Job Title.
-*   **Lặp kỹ năng:** Biến ma trận tần suất dạng số thành dạng văn bản thô (Text Corpus) để BM25+ phát huy tối đa sức mạnh tính toán mà không cần qua các bước trung gian phức tạp.
-*   **So với LLM:** Phương pháp này tối ưu hơn LLM về chi phí, độ trễ (Latency) và tránh được hiện tượng ảo tưởng (Hallucination).
-
-### ❓ Câu 4: Xử lý rác dữ liệu và Spam từ khóa (Keyword Stuffing)?
-Kiến trúc **Group By theo Role** chính là bộ lọc nhiễu tự nhiên:
-*   Nếu để từng Job đơn lẻ, Job rác sẽ vọt lên Top.
-*   Khi gom cụm, các từ khóa rác từ một vài tin tuyển dụng lẻ tẻ sẽ có tần suất cực thấp so với các kỹ năng chuẩn (SQL, Python,...) được hàng ngàn tin chính thống xác nhận. Chỉ số **IDF** sẽ tự động "đè" điểm của những từ khóa nhiễu này xuống mức tối thiểu.
----
-
-## 🤝 PHẦN 3: SỰ PHỐI HỢP HYBRID (FAISS vs BM25+)
-
-### ❓ Câu 5: Tại sao cần cả BM25+ khi đã có FAISS (Neural Search)?
-Đây là mô hình **Hybrid Retrieval** (Song kiếm hợp bích):
-1.  **FAISS (Semantic - Ngữ nghĩa):** Hiểu ngữ cảnh vĩ mô (ví dụ: Data Analyst tương đồng với Business Intelligence). Hoạt động tốt trên tầng Job đơn lẻ.
-2.  **BM25+ (Lexical - Khớp từ khóa):** Đảm bảo độ chính xác tuyệt đối với các từ khóa kỹ năng cứng (ví dụ: Angular v14 khác v17).
-3.  **Quan trọng:** FAISS không thể tính toán lộ trình kỹ năng thiếu hụt. BM25+ tạo ra ma trận trọng số vĩ mô để bóc tách chính xác những "mảnh ghép" còn thiếu trong CV ứng viên.
-
-### ❓ Câu 6: Tại sao lấy điểm của Job để tính điểm cho Skill?
-Dựa trên logic **Lan truyền trọng số theo ngữ cảnh (Contextual Weight Propagation)**:
-$$Skill\_Score += Job\_Base\_Score \times Skill\_Source\_Weight$$
-*   Chúng ta không tìm kỹ năng xuất hiện nhiều nhất một cách mù quáng.
-*   Chúng ta tìm kỹ năng xuất hiện trong những **Job phù hợp nhất** với người dùng. Một Job có điểm cao (do FAISS/Location match) thì các kỹ năng bên trong nó xứng đáng có trọng số tích lũy lớn hơn.
+### ❓ Câu 8: Việc dùng MinIO có ưu điểm gì cho Big Data?
+**Trả lời:** MinIO đóng vai trò là **Data Lake**. Nó cho phép lưu trữ các phiên bản Model (Checkpointing) khác nhau. Khi dữ liệu tuyển dụng tăng lên hàng triệu bản ghi, chúng ta chỉ cần chạy lại script Build trên một cụm Spark/Worker và cập nhật file Pickle, hệ thống gợi ý sẽ tự động "thông minh" lên mà không cần code lại logic.
 
 ---
+> **💡 Mẹo bảo vệ:** Khi bị hỏi về độ chính xác, hãy tự tin nói: "Hệ thống của em không chỉ khớp từ khóa, mà còn mô phỏng lại phân phối kỹ năng của thị trường lao động thông qua cơ chế Unified Document Weighting."
 
-## 🛠️ PHẦN 4: TIỀN XỬ LÝ & THỰC TẾ VẬN HÀNH
-
-### ❓ Câu 7: Quy trình xử lý dữ liệu thô (Data Pipeline)?
-Áp dụng pipeline 4 bước:
-1.  **Clean HTML & Regex:** Loại bỏ rác định dạng.
-2.  **Normalization:** Đồng bộ hóa font và Case (tránh hiểu nhầm Java và java).
-3.  **Custom Stopwords:** Loại bỏ từ thừa ngành tuyển dụng (yêu cầu, mức lương, quyền lợi...).
-4.  **Skill-Extraction (Hard Filtering):** Chỉ giữ lại các danh từ riêng thuộc bộ từ điển kỹ năng để BM25+ tập trung 100% vào chuyên môn.
-
-### ❓ Câu 8: Làm sao kết hợp điểm số giữa FAISS và BM25+?
-Vì hai thang điểm khác nhau, chúng ta sử dụng:
-*   **Cách 1: Min-Max Scaling:** Đưa tất cả về khoảng $[0, 1]$ rồi tính tổng có trọng số ($\alpha \approx 0.7$ cho FAISS).
-*   **Cách 2: Reciprocal Rank Fusion (RRF):** Chỉ quan tâm đến thứ hạng (Rank) để kết hợp kết quả một cách công bằng.
-
-### ❓ Câu 9: Giới hạn và hướng phát triển?
-*   **Cold Start:** Với Role mới chưa đủ dữ liệu, hệ thống ưu tiên 100% FAISS trước khi cập nhật văn bản gộp.
-*   **Batch Update:** Cần chạy Cron Job cập nhật định kỳ (tuần/tháng) để bắt kịp các công nghệ mới nổi (LLM, Generative AI).
-
----
-> **💡 Mẹo ghi điểm:** Luôn bám sát số liệu về thời gian phản hồi (mili-giây) và độ chính xác (Precision/Recall) để thuyết phục Hội đồng.
