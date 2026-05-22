@@ -1,7 +1,7 @@
 """
 Text & Skill parsing utilities.
 
-Dùng chung cho model_tfidf.py và recommend.py.
+Dùng chung cho model_bm25.py và recommend.py.
 """
 
 import ast

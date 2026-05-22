@@ -234,3 +234,54 @@ def upload_df_parquet_local_temp(
 
     # Xóa file tạm sau khi upload xong
     temp_file.unlink(missing_ok=True)
+
+
+def upload_pickle(
+    client: Minio,
+    obj: object,
+    object_name: str,
+    bucket_name: str = MINIO_BUCKET,
+) -> None:
+    """Upload Python object dưới dạng pickle lên MinIO."""
+    import pickle
+
+    buffer = BytesIO()
+    pickle.dump(obj, buffer)
+    buffer.seek(0)
+
+    client.put_object(
+        bucket_name=bucket_name,
+        object_name=object_name,
+        data=buffer,
+        length=buffer.getbuffer().nbytes,
+        content_type="application/octet-stream",
+    )
+
+    size_mb = buffer.getbuffer().nbytes / (1024 * 1024)
+    print(f"Đã lưu Pickle: s3://{bucket_name}/{object_name} ({size_mb:.1f} MB)")
+
+
+def download_pickle(
+    client: Minio,
+    object_name: str,
+    bucket_name: str = MINIO_BUCKET,
+) -> object:
+    """Download pickle từ MinIO và load thành Python object."""
+    import pickle
+
+    response = client.get_object(
+        bucket_name=bucket_name,
+        object_name=object_name,
+    )
+
+    try:
+        data = response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+    obj = pickle.loads(data)
+    size_mb = len(data) / (1024 * 1024)
+    print(f"Đã load Pickle: s3://{bucket_name}/{object_name} ({size_mb:.1f} MB)")
+
+    return obj
