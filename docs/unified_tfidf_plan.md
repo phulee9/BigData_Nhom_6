@@ -1,157 +1,163 @@
-# Unified TF-IDF Document Model — Implementation Plan
+# Unified BM25Plus Document Model — Kiến trúc & Thiết kế
 
-## Vấn đề hiện tại
+## Bối cảnh: Từ TF-IDF đến BM25+
 
-Hiện tại matching **tách rời** role và skill:
-1. Tìm role tương tự → lấy skills của role đó
-2. Filter bỏ user skills
+### Vấn đề của TF-IDF (phương pháp cũ)
 
-→ Role matching và skill matching là **2 bước riêng biệt**, không xét mối quan hệ giữa role + skill cùng lúc.
-
-## Ý tưởng mới
-
-**Gộp role + skills thành 1 "document"**, dùng TF-IDF cosine similarity trên document đó.
-
-### Ví dụ trực quan
+Phiên bản đầu sử dụng `TfidfVectorizer` + Cosine Similarity:
 
 ```
-Document cho "data engineer" (100 jobs trong dataset):
-┌──────────────────────────────────────────────────────────────┐
-│ "data engineer python python python sql sql spark spark aws" │
-│  ↑ role name    ↑ python xuất hiện 80/100 jobs → TF cao     │
-└──────────────────────────────────────────────────────────────┘
-
-Query của user (muốn làm "data engineer", đã biết python + sql):
-┌──────────────────────────────────┐
-│ "data engineer python sql"       │
-└──────────────────────────────────┘
-
-→ Cosine similarity cao vì overlap CẢ role lẫn skills
-→ "data engineering" (role khác nhưng tương tự) cũng match vì share n-grams
+Document = TF-IDF vector (sparse)
+Query    = TF-IDF vector (sparse)
+Score    = cosine_similarity(query, document)
 ```
 
-## Kiến trúc mới
+**Hạn chế:**
+- Không có cơ chế **TF saturation** → skill quá phổ biến (vd: "communication") dominate score
+- Không có **length normalization** → Unified Document rất dài, gây lệch score
+- Cần maintain thêm `TfidfVectorizer` object → phức tạp khi serialize
+- Cosine similarity trên document dài bị **curse of dimensionality** → score tự nhiên thấp
+
+### Giải pháp: Chuyển sang BM25+
+
+BM25+ giải quyết tất cả vấn đề trên:
+
+| Vấn đề TF-IDF | Giải pháp BM25+ |
+|----------------|-----------------|
+| TF không bão hòa | $k_1$ parameter kiểm soát saturation |
+| Không normalize length | $b$ parameter normalize theo avgdl |
+| Score = 0 cho rare terms | $\delta$ đảm bảo score > 0 |
+| Cần vectorizer riêng | Tự chứa inverted index |
+| Cosine similarity thấp trên doc dài | BM25 score không bị ảnh hưởng |
+
+---
+
+## Kiến trúc hiện tại
+
+### Data Flow
 
 ```mermaid
 flowchart TD
-    A["Raw Data\n(Silver Final Clean)"] --> B["Group by role"]
-    B --> C["Mỗi role = 1 Document\nrole_name + ALL skills\n(giữ duplicates)"]
-    C --> D["TfidfVectorizer.fit_transform()\nanalyzer=word, ngram_range=(1,2)"]
-    D --> E["TF-IDF Matrix\n(n_roles × vocab_size)"]
+    A["Raw Data<br/>(linkedin_job_postings.csv<br/>+ job_skills.csv)"]
+    B["build_silver_jobs.py"]
+    C["jobs_silver.parquet<br/>(title_core, skills_normalized)"]
+    D["apply_skill_mapping_to_silver.py<br/>Groq-based skill normalization"]
+    E["01_build_bm25.py"]
+    F["BM25PlusRecommender._build_bm25()"]
+    G["Group by title_core<br/>→ Unified Documents"]
+    H["BM25Plus.fit(corpus)"]
+    I["Serialize → pickle"]
+    J["MinIO: gold/kaggle/bm25/bm25_model.pkl"]
+    K["02_bm25_recommend.py"]
+    L["Deserialize pickle"]
+    M["query(role, skills, top_k)"]
+    N["Missing Skills<br/>(skill, recommend_score, job_count)"]
 
-    Q["User Query\ntarget_role + user_skills"] --> F["vectorizer.transform()"]
-    F --> G["Cosine Similarity\nvs tất cả documents"]
-    G --> H["Top-N documents\n(role + sim_score)"]
-    H --> I["Extract skills\nweighted by similarity"]
-    I --> J["Filter user skills\n(exact match)"]
-    J --> K["Apply level weights"]
-    K --> L["Return top-K skills"]
+    A --> B --> C --> D --> C
+    C --> E --> F --> G --> H --> I --> J
+    J --> K --> L --> M --> N
+
+    style C fill:#1e3a5f,color:#fff
+    style J fill:#3b1f5f,color:#fff
+    style N fill:#1f5f3b,color:#fff
 ```
 
-## Chi tiết Implementation
-
-### 1. Data Structures
+### Class Design
 
 ```python
-class TFIDFRecommender:
-    # Fitted vectorizer trên tất cả documents
-    _vectorizer: TfidfVectorizer
-    
-    # TF-IDF matrix: (n_roles, vocab_size)
-    _doc_matrix: sparse matrix
-    
-    # Metadata cho mỗi document (index tương ứng)
-    _doc_roles: list[str]           # ["data engineer", "data analyst", ...]
-    _doc_skill_counts: list[dict]   # [{"python": 80, "sql": 60}, ...]
-    _doc_job_counts: list[int]      # [100, 50, ...]  tổng jobs mỗi role
+class BM25PlusRecommender:
+    # ─── Config ───
+    SCORE_THRESHOLD = 0.0       # Ngưỡng BM25 tối thiểu
+    MAX_SIMILAR_ROLES = 10      # Top N roles để extract skills
+    ROLE_NAME_REPEAT = 2        # Boost role name trong document
+
+    # ─── State (serialized qua pickle) ───
+    _bm25: BM25Plus             # Fitted BM25+ index
+    _doc_roles: list[str]       # ["data engineer", "data analyst", ...]
+    _doc_skill_counts: list[dict]  # [{"python": 90, "sql": 85}, ...]
+    _doc_job_counts: list[int]  # [100, 50, ...]
+
+    # ─── API ───
+    load_from_minio(object_name)  # Build từ MinIO Silver
+    load_from_dataframe(df)       # Build từ DataFrame
+    query(role, skills, top_k)    # → list[dict]
+    get_roles()                   # → list[str]
+    get_role_skills(role, top_k)  # → list[dict]
+    find_similar_roles(role, top_k) # → list[tuple]
 ```
 
-### 2. Build Phase (`_build_tfidf_matrix`)
+### Dữ liệu đầu vào
+
+| Cột trong Silver | Ý nghĩa | Xử lý |
+|-----------------|---------|-------|
+| `title_core` | Job title đã chuẩn hóa (bỏ seniority, work_mode, lemmatized) | `normalize_text_lower()` → role name |
+| `skills_normalized` | Skills đã ánh xạ qua Groq whitelist | `parse_skills_lower()` → list[str] |
+
+---
+
+## So sánh với cách tiếp cận khác
+
+### 1. Item-based (1 job = 1 document)
 
 ```
-Input: DataFrame (job_title_canonical, skills_canonical)
-  
-Bước 1: Chuẩn hóa
-  - role = normalize(job_title_canonical)
-  - skills = parse_skills_lower(skills_canonical)
-
-Bước 2: Group by role
-  - Đếm tổng jobs mỗi role
-  - Đếm số lần mỗi skill xuất hiện trong role
-  - Lọc role rác (< 3 jobs)
-
-Bước 3: Tạo documents
-  Với mỗi role:
-    - Lấy tất cả skills từ tất cả jobs (giữ duplicates)
-    - Document text = f"{role} {role} {skill1} {skill1} ... {skillN}"
-    - Role name lặp 2 lần để có trọng số trong TF-IDF
-    - Skills giữ nguyên frequency từ data
-
-Bước 4: Fit TF-IDF
-  - TfidfVectorizer(analyzer="word", ngram_range=(1, 2), 
-                     sublinear_tf=True, min_df=2)
-  - word-level unigram + bigram để bắt "machine learning", "data engineer"
-  - sublinear_tf=True: dùng 1 + log(tf) thay vì raw tf → tránh skill quá phổ biến dominate
+Pros: Giữ nguyên context từng job
+Cons: 124K documents → query chậm, noise cao, mỗi job viết khác nhau
 ```
 
-### 3. Query Phase (`query`)
+### 2. Unified Role (hiện tại: 1 role = 1 document)
 
 ```
-Input: target_role, user_skills, level, top_k
-
-Bước 1: Tạo query string
-  query_text = f"{target_role} {' '.join(user_skills)}"
-
-Bước 2: Transform & cosine similarity
-  query_vec = vectorizer.transform([query_text])
-  sims = cosine_similarity(query_vec, doc_matrix).flatten()
-
-Bước 3: Lấy top-N documents (roles) tương tự
-  - Sort by similarity, lấy top MAX_SIMILAR_ROLES
-  - Filter sim >= SIMILARITY_THRESHOLD
-
-Bước 4: Extract & aggregate skills
-  Với mỗi matched role (role_name, sim_score):
-    skill_weights[skill] += (count / total_jobs) * sim_score
-  
-  → Mỗi skill có weighted score = TF trong role × similarity
-
-Bước 5: Filter user skills (exact match trên normalized text)
-
-Bước 6: Apply level weights (senior boost leadership, etc.)
-
-Bước 7: Sort & return top-K
+Pros: Denoising, phản ánh phân phối skill thực tế, ~2K-5K documents → query nhanh
+Cons: Mất context individual job (nhưng không cần vì mục đích là gợi ý skill, không gợi ý job)
 ```
 
-### 4. Ưu điểm so với cách cũ
+### 3. Embedding-only (FAISS)
 
-| Aspect | Cách cũ | Cách mới |
-|--------|---------|----------|
-| Role matching | Tách riêng, char n-gram | Gộp chung trong 1 TF-IDF space |
-| Skill matching | Tách riêng, char n-gram | Gộp chung → skill context ảnh hưởng role match |
-| "data engineer" + ["python"] | Chỉ match role, bỏ qua python khi tìm role | Match cả role + python → ưu tiên DE roles dùng python |
-| Cross-signal | Không có | Có! Role "ML engineer" + skill "tensorflow" boost lẫn nhau |
-| Complexity | 3 indexes (role, skill, matrix) | 1 index duy nhất |
-
-### 5. Config mặc định
-
-```python
-SIMILARITY_THRESHOLD = 0.1    # Ngưỡng thấp hơn vì document dài hơn
-MAX_SIMILAR_ROLES = 10        # Lấy nhiều hơn vì aggregate sẽ tốt hơn
-ROLE_NAME_REPEAT = 2          # Lặp role name bao nhiêu lần trong document
+```
+Pros: Hiểu ngữ nghĩa, match semantic
+Cons: Không biết tần suất, có thể match sai (semantic drift), không interpretable
 ```
 
-> [!NOTE]
-> Ngưỡng similarity thấp hơn (0.1 vs 0.3) vì documents dài hơn → cosine similarity tự nhiên thấp hơn do curse of dimensionality.
+### 4. Hybrid BM25+ + FAISS (hiện tại)
 
-## Files cần thay đổi
+```
+Pros: Kết hợp exact match + semantic, robust, interpretable
+Cons: Cần maintain 2 systems, nhưng chi phí thấp vì BM25+ rất nhẹ
+```
 
-| File | Thay đổi |
-|------|----------|
-| `model_tfidf.py` | **Viết lại hoàn toàn** — unified document model |
-| `01_build_tfidf.py` | Không đổi (interface giữ nguyên) |
-| `02_tfidf_recommend.py` | Không đổi (interface giữ nguyên) |
-| `recommend.py` | Không đổi (gọi qua `query()`) |
+---
 
-> [!IMPORTANT]
-> Public API (`query()`, `load_from_minio()`, `load_matrix()`, `get_roles()`, `get_role_skills()`) giữ nguyên signature → backward compatible.
+## Files liên quan
+
+| File | Chức năng | Thay đổi khi refactor |
+|------|-----------|----------------------|
+| `src/recommendation/core/model_bm25.py` | Core BM25+ logic | ✅ Đã cập nhật: dùng `title_core` + `skills_normalized` |
+| `src/recommendation/core/hybrid_rrf.py` | RRF fusion | Không thay đổi |
+| `src/recommendation/utils/text.py` | Text normalization | Không thay đổi |
+| `scripts/recommend/01_build_bm25.py` | Build & upload pickle | Không thay đổi (gọi API đã sửa) |
+| `scripts/recommend/02_bm25_recommend.py` | Load & query | Không thay đổi |
+| `scripts/recommend/03_hybrid_rrf.py` | Hybrid pipeline | Không thay đổi |
+
+### Thay đổi chính so với code cũ
+
+```diff
+# model_bm25.py
+
+- from src.config import SILVER_KAGGLE_FINAL_CLEAN
++ SILVER_KAGGLE_JOBS = "silver/kaggle/jobs_silver.parquet"
++ COL_TITLE = "title_core"
++ COL_SKILLS = "skills_normalized"
+
+  def _build_bm25(self, df):
+-     df = df[["job_title_canonical", "skills_canonical"]].copy()
+-     df["role"] = df["job_title_canonical"].apply(normalize_text_lower)
+-     df["skills_list"] = df["skills_canonical"].apply(parse_skills_lower)
++     df = df[[COL_TITLE, COL_SKILLS]].copy()
++     df["role"] = df[COL_TITLE].apply(normalize_text_lower)
++     df["skills_list"] = df[COL_SKILLS].apply(parse_skills_lower)
+```
+
+**Lý do thay đổi:**
+- `job_title_canonical` / `skills_canonical` là tên cột của **crawler pipeline** (pipeline khác)
+- Kaggle Silver pipeline thực tế output `title_core` / `skills_normalized` (theo `SILVER_COLUMNS` trong `silver_config.py`)
+- Đường dẫn cũ `silver/kaggle/05_final_clean/...` không tồn tại trong Kaggle pipeline, Kaggle Silver nằm tại `silver/kaggle/jobs_silver.parquet`

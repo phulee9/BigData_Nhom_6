@@ -1,7 +1,12 @@
 """
 Unified BM25Plus Document Recommender
 
-Mỗi role = 1 document, nội dung = role_name + all_skills (giữ duplicates).
+Dữ liệu đầu vào: Silver Kaggle (silver/kaggle/jobs_silver.parquet)
+  - Cột title:  title_core     (từ silver_builder.py → title_utils.py)
+  - Cột skills: skills_normalized (từ silver_builder.py → skill_mapping_applier.py)
+
+Mỗi role (title_core) = 1 document.
+Nội dung document = role_name tokens + skill tokens (giữ duplicates để BM25+ tính TF).
 Query = target_role + user_skills → BM25Plus score → extract missing skills.
 
 Lưu/load bằng pickle — không cần rebuild khi load.
@@ -14,7 +19,6 @@ from collections import defaultdict
 import pandas as pd
 from rank_bm25 import BM25Plus
 
-from src.config import SILVER_KAGGLE_FINAL_CLEAN
 from src.storage.minio_client import (
     get_minio_client,
     read_parquet_from_minio,
@@ -24,13 +28,24 @@ from src.recommendation.utils.text import (
     parse_skills_lower,
 )
 
+# Đường dẫn Silver Kaggle (output của build_silver_jobs.py + apply_skill_mapping_to_silver.py)
+SILVER_KAGGLE_JOBS = "silver/kaggle/jobs_silver.parquet"
+
+# Tên cột trong Silver Kaggle (theo SILVER_COLUMNS trong silver_config.py)
+COL_TITLE = "title_core"
+COL_SKILLS = "skills_normalized"
+
 
 class BM25PlusRecommender:
     """
     Unified BM25Plus Recommender.
 
-    Workflow:
-    1. Mỗi role = 1 document (tokens = role words + skill words)
+    Pipeline dữ liệu (theo README):
+      build_silver_jobs.py  →  jobs_silver.parquet  (title_core, skills_normalized)
+      apply_skill_mapping   →  cập nhật skills_normalized
+
+    Workflow BM25+:
+    1. Mỗi role (title_core) = 1 document (tokens = role words + skill words)
     2. Fit BM25Plus trên tất cả documents
     3. Query = target_role + user_skills → BM25Plus score
     4. Extract missing skills từ matched roles
@@ -48,32 +63,51 @@ class BM25PlusRecommender:
 
     # ────────────── Load ──────────────
 
-    def load_from_minio(self) -> None:
-        """Đọc Silver Final Clean từ MinIO, build BM25Plus."""
+    def load_from_minio(self, object_name: str | None = None) -> None:
+        """Đọc Silver Kaggle từ MinIO, build BM25Plus.
+
+        Parameters:
+            object_name: Đường dẫn MinIO tùy chỉnh.
+                         Mặc định = silver/kaggle/jobs_silver.parquet
+        """
         client = get_minio_client()
 
-        print("[BM25+] Đọc Silver Final Clean từ MinIO...")
+        target_path = object_name or SILVER_KAGGLE_JOBS
+        print(f"[BM25+] Đọc Silver từ MinIO: {target_path}")
         silver_df = read_parquet_from_minio(
             client=client,
-            object_name=SILVER_KAGGLE_FINAL_CLEAN,
+            object_name=target_path,
         )
         print(f"[BM25+] Loaded: {len(silver_df)} rows")
+        print(f"[BM25+] Columns: {list(silver_df.columns)}")
 
         self._build_bm25(silver_df)
 
     def load_from_dataframe(self, df: pd.DataFrame) -> None:
-        """Build BM25Plus từ DataFrame (cần job_title_canonical, skills_canonical)."""
+        """Build BM25Plus từ DataFrame (cần cột title_core, skills_normalized)."""
         self._build_bm25(df)
 
     # ────────────── Build ──────────────
 
     def _build_bm25(self, df: pd.DataFrame) -> None:
-        """Build unified BM25Plus từ raw data."""
+        """Build unified BM25Plus từ Silver data.
+
+        Yêu cầu cột: title_core, skills_normalized
+        (theo SILVER_COLUMNS trong src/config/silver_config.py)
+        """
         print("[BM25+] Building Unified Document Model...")
 
-        df = df[["job_title_canonical", "skills_canonical"]].copy()
-        df["role"] = df["job_title_canonical"].apply(normalize_text_lower)
-        df["skills_list"] = df["skills_canonical"].apply(parse_skills_lower)
+        # Kiểm tra cột bắt buộc
+        for col in [COL_TITLE, COL_SKILLS]:
+            if col not in df.columns:
+                raise KeyError(
+                    f"[BM25+] Thiếu cột '{col}'. "
+                    f"Các cột hiện có: {list(df.columns)}"
+                )
+
+        df = df[[COL_TITLE, COL_SKILLS]].copy()
+        df["role"] = df[COL_TITLE].apply(normalize_text_lower)
+        df["skills_list"] = df[COL_SKILLS].apply(parse_skills_lower)
 
         df = df[df["role"].str.len() > 0]
         df = df[df["skills_list"].apply(len) > 0]
