@@ -14,8 +14,17 @@ __pycache__/
 .env.*
 !.env.example
 
-# Local data folder
-data/
+# Local data files
+data/raw/
+data/temp/
+data/check/
+data/runtime_index/
+runtime_index/
+
+# Keep folder structure
+!data/
+!data/mapping/
+!data/mapping/.gitkeep
 
 # Raw / processed data files
 *.csv
@@ -39,11 +48,6 @@ data/
 *.pt
 *.pth
 *.safetensors
-
-# MinIO / runtime / temp artifacts
-data/temp/
-data/runtime_index/
-runtime_index/
 
 # Logs
 logs/
