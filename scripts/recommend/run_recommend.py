@@ -117,18 +117,9 @@ def get_manual_input() -> dict:
         "(ví dụ: SQL, Power BI, Excel): "
     ).strip()
 
-    location = input(
-        "Location "
-        "(ví dụ: Ho Chi Minh, Vietnam): "
-    ).strip()
-
-    if not location:
-        location = "Unknown"
-
     return {
         "job_title": job_title,
         "skills": skills,
-        "location": location,
     }
 
 
@@ -161,7 +152,6 @@ def get_cv_input() -> dict:
     return {
         "job_title": extracted.get("job_title", "Unknown"),
         "skills": extracted.get("current_skills", []),
-        "location": extracted.get("location", "Unknown"),
     }
 
 
@@ -173,12 +163,10 @@ def run_recommend_once(
 ) -> dict[str, pd.DataFrame]:
     user_job_title = str(input_data["job_title"] or "").strip()
     user_skills = parse_skills(input_data["skills"])
-    user_location = str(input_data["location"] or "Unknown").strip()
 
     query_texts = build_query_texts(
         job_title=user_job_title,
         skills=user_skills,
-        location=user_location,
     )
 
     query_embeddings = {
@@ -189,10 +177,6 @@ def run_recommend_once(
         "skills_text": encode_query(
             model=model,
             text=query_texts["skills_text"],
-        ),
-        "full_text": encode_query(
-            model=model,
-            text=query_texts["full_text"],
         ),
     }
 
@@ -225,7 +209,6 @@ def run_recommend_once(
         runtime_indexes=runtime_indexes,
         user_job_title=user_job_title,
         user_skills=user_skills,
-        user_location=user_location,
     )
 
     if all_jobs_df.empty:
