@@ -183,7 +183,7 @@ gold/kaggle/index/title_faiss.index
 gold/kaggle/index/skills_faiss.index
 ```
 
-10. Thứ tự chạy đầy đủ
+10. Thứ tự chạy pipeline đầy đủ (Bronze → Silver → Gold → FAISS)
 
 ```bash
 python scripts/minio/create_data_lake_zones.py
@@ -195,3 +195,170 @@ python scripts/kaggle/build_gold_encoding.py
 python scripts/kaggle/build_faiss_indexes.py
 ```
 
+
+---
+
+PHẦN 2: CHẠY RECOMMENDATION
+
+11. Build BM25+ model
+
+```bash
+python scripts/recommend/01_build_bm25.py
+```
+
+File này dùng để:
+
+```text
+Đọc silver/kaggle/jobs_silver.parquet từ MinIO
+Mỗi role (title_core) = 1 document
+Nội dung document = tên role + tất cả skills
+Fit BM25Plus trên tất cả documents
+Upload model (pickle) lên MinIO
+```
+
+Output:
+
+```text
+gold/kaggle/bm25/bm25_model.pkl (trên MinIO)
+```
+
+12. Chuẩn bị data runtime index cho FAISS Embedding
+
+Sau khi chạy xong bước 9, copy các file từ MinIO về local:
+
+```text
+data/runtime_index/kaggle/
+├── jobs_metadata.parquet       ← từ gold/kaggle/metadata/jobs_metadata.parquet
+├── title_faiss.index           ← từ gold/kaggle/index/title_faiss.index
+└── skills_faiss.index          ← từ gold/kaggle/index/skills_faiss.index
+```
+
+Lưu ý:
+- Tên file có thể là title_faiss.index hoặc title.faiss.index đều được
+- Tên metadata có thể là jobs_metadata.parquet hoặc metadata.parquet đều được
+- Hệ thống dùng 2 FAISS index: title + skills
+
+13. Chạy Recommendation
+
+Có 3 cách chạy:
+
+13a. BM25+ standalone (chỉ keyword matching)
+
+```bash
+python scripts/recommend/02_bm25_recommend.py
+```
+
+Cách hoạt động:
+
+```text
+Load BM25+ model (pickle) từ MinIO
+User nhập role + skills
+BM25+ tính score cho từng document
+Tìm Top 10 roles tương tự
+Extract missing skills từ matched roles
+```
+
+Yêu cầu:
+- MinIO phải đang chạy
+- Đã có file gold/kaggle/bm25/bm25_model.pkl trên MinIO (chạy bước 11)
+
+13b. Embedding standalone (FAISS semantic search)
+
+```bash
+python scripts/recommend/run_recommend.py
+```
+
+Cách hoạt động:
+
+```text
+Load SentenceTransformer model (all-MiniLM-L6-v2)
+Load 2 FAISS indexes từ data/runtime_index/kaggle/
+User nhập role + skills (hoặc upload CV PDF)
+Encode query thành vectors
+FAISS tìm Top 300 jobs gần nhất
+Rerank bằng: semantic score + title fuzzy + skill overlap
+Trả về Top 10 jobs + Top 10 missing skills
+```
+
+Yêu cầu:
+- Đã có data trong data/runtime_index/kaggle/ (xem bước 12)
+
+13c. Hybrid RRF (kết hợp BM25+ và Embedding)
+
+```bash
+python scripts/recommend/03_hybrid_rrf.py
+```
+
+Cách hoạt động:
+
+```text
+Load BM25+ model từ MinIO
+Load Embedding model + FAISS indexes từ local
+User nhập role + skills
+Chạy song song 2 pipeline:
+  - BM25+: keyword matching → Top 10 missing skills
+  - Embedding: semantic search → Top 10 missing skills
+RRF Fusion: kết hợp 2 danh sách bằng công thức
+  rrf_score = Σ 1/(60 + rank)
+Skill xuất hiện ở cả 2 bên → score cao hơn
+Trả về Top 10 hybrid missing skills
+```
+
+Yêu cầu:
+- MinIO phải đang chạy (cho BM25+)
+- Đã có file gold/kaggle/bm25/bm25_model.pkl trên MinIO (chạy bước 11)
+- Đã có data trong data/runtime_index/kaggle/ (xem bước 12)
+
+
+14. Tổng hợp vị trí data
+
+Data trên MinIO:
+
+```text
+bronze/kaggle/linkedin_job_postings.csv    ← Raw data
+bronze/kaggle/job_skills.csv               ← Raw data
+silver/kaggle/jobs_silver.parquet          ← Data đã clean
+gold/kaggle/jobs_for_encoding.parquet      ← Data để encode
+gold/kaggle/metadata/jobs_metadata.parquet  ← Metadata job
+gold/kaggle/embeddings/title_embeddings.npy ← Title vectors
+gold/kaggle/embeddings/skills_embeddings.npy ← Skills vectors
+gold/kaggle/index/title_faiss.index        ← FAISS index title
+gold/kaggle/index/skills_faiss.index       ← FAISS index skills
+gold/kaggle/bm25/bm25_model.pkl           ← BM25+ model
+```
+
+Data trên local:
+
+```text
+data/raw/linkedin_job_postings.csv         ← Raw CSV gốc
+data/raw/job_skills.csv                    ← Raw CSV gốc
+data/mapping/skill_alias_mapping.csv       ← Skill mapping (Groq)
+data/mapping/skill_whitelist.csv           ← Skill whitelist (Groq)
+data/runtime_index/kaggle/                 ← FAISS runtime index
+  ├── jobs_metadata.parquet
+  ├── title_faiss.index
+  └── skills_faiss.index
+```
+
+15. Thứ tự chạy đầy đủ (pipeline + recommendation)
+
+```bash
+# Pipeline data
+python scripts/minio/create_data_lake_zones.py
+python scripts/kaggle/upload_raw_to_bronze.py
+python scripts/kaggle/build_silver_jobs.py
+python scripts/kaggle/build_skill_mapping_with_groq.py
+python scripts/kaggle/apply_skill_mapping_to_silver.py
+python scripts/kaggle/build_gold_encoding.py
+python scripts/kaggle/build_faiss_indexes.py
+
+# Build models
+python scripts/recommend/01_build_bm25.py
+
+# Copy FAISS data từ MinIO về data/runtime_index/kaggle/
+
+# Chạy recommendation (chọn 1 trong 3)
+python scripts/recommend/02_bm25_recommend.py
+python scripts/recommend/run_recommend.py
+python scripts/recommend/03_hybrid_rrf.py
+```

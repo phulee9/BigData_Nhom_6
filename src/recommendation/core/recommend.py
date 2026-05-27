@@ -49,19 +49,17 @@ SKILL_SOURCE_WEIGHTS = {
     "crawler": 0.60,
 }
 
-# Trọng số 3 index vector
+# Trong so 2 index vector
 INDEX_WEIGHTS = {
-    "title_score": 0.30,
-    "skills_score": 0.30,
-    "full_score": 0.40,
+    "title_score": 0.45,
+    "skills_score": 0.55,
 }
 
-# Trọng số rerank
+# Trong so rerank
 RERANK_WEIGHTS = {
-    "semantic_score": 0.45,
-    "title_fuzzy_score": 0.20,
+    "semantic_score": 0.50,
+    "title_fuzzy_score": 0.25,
     "skill_overlap_score": 0.25,
-    "location_score": 0.10,
 }
 
 
@@ -180,32 +178,22 @@ def skills_to_text(skills: list[str]) -> str:
 def build_query_texts(
     job_title: str,
     skills: list[str],
-    location: str,
 ) -> dict[str, str]:
     """
-    Build input text đúng format với Gold Encode:
+    Build input text cho 2 FAISS indexes:
 
     title_text:
     Job title: Data Analyst.
 
     skills_text:
     Required skills: SQL, Power BI, Excel.
-
-    full_text:
-    Job title: Data Analyst. Location: Ho Chi Minh, Vietnam. Required skills: SQL, Power BI, Excel.
     """
     job_title = normalize_text(job_title) or "Not specified"
-    location = normalize_text(location) or "Unknown"
     skills_text = skills_to_text(skills)
 
     return {
         "title_text": f"Job title: {job_title}.",
         "skills_text": f"Required skills: {skills_text}.",
-        "full_text": (
-            f"Job title: {job_title}. "
-            f"Location: {location}. "
-            f"Required skills: {skills_text}."
-        ),
     }
 
 
@@ -318,40 +306,6 @@ def skill_overlap_score(
     return len(intersection) / len(user_set)
 
 
-def location_score(
-    user_location: str,
-    job_location: str,
-) -> float:
-    user_location = normalize_token(user_location)
-    job_location = normalize_token(job_location)
-
-    if not user_location:
-        return 0.0
-
-    if not job_location or job_location == "unknown":
-        return 0.0
-
-    if user_location == job_location:
-        return 1.0
-
-    if user_location in job_location or job_location in user_location:
-        return 0.8
-
-    user_parts = set(user_location.split())
-    job_parts = set(job_location.split())
-
-    if not user_parts or not job_parts:
-        return 0.0
-
-    overlap = user_parts.intersection(job_parts)
-
-    if overlap:
-        return min(
-            0.6,
-            len(overlap) / max(len(user_parts), 1),
-        )
-
-    return 0.0
 
 
 # Load runtime indexes
@@ -376,7 +330,7 @@ def load_default_runtime_indexes() -> list[RuntimeIndex]:
             )
         )
     else:
-        print(f"Bỏ qua Kaggle vì chưa có folder: {DEFAULT_KAGGLE_RUNTIME_DIR}")
+        print(f"Skip Kaggle (folder not found): {DEFAULT_KAGGLE_RUNTIME_DIR}")
 
     if DEFAULT_CRAWLER_RUNTIME_DIR.exists():
         runtime_indexes.append(
@@ -387,12 +341,12 @@ def load_default_runtime_indexes() -> list[RuntimeIndex]:
             )
         )
     else:
-        print(f"Bỏ qua Crawler vì chưa có folder: {DEFAULT_CRAWLER_RUNTIME_DIR}")
+        print(f"Skip Crawler (folder not found): {DEFAULT_CRAWLER_RUNTIME_DIR}")
 
     if not runtime_indexes:
         raise FileNotFoundError(
-            "Không tìm thấy runtime index nào. "
-            "Cần có data/runtime_index/kaggle hoặc data/runtime_index/crawler."
+            "No runtime index found. "
+            "Need data/runtime_index/kaggle or data/runtime_index/crawler."
         )
 
     return runtime_indexes
@@ -406,13 +360,12 @@ def collect_candidates_from_source(
     top_k_each_index: int,
 ) -> dict[tuple[str, int], dict[str, Any]]:
     """
-    Search 3 indexes trong cùng một source:
+    Search 2 indexes trong cung mot source:
     - title_index
     - skills_index
-    - full_index
 
-    Candidate có thể xuất hiện trong nhiều index.
-    Nếu trùng, giữ score cao nhất cho từng loại score.
+    Candidate co the xuat hien trong nhieu index.
+    Neu trung, giu score cao nhat cho tung loai score.
     """
     source_name = runtime_index.source_name
 
@@ -428,11 +381,6 @@ def collect_candidates_from_source(
             "skills_score",
             runtime_index.skills_index,
             query_embeddings["skills_text"],
-        ),
-        (
-            "full_score",
-            runtime_index.full_index,
-            query_embeddings["full_text"],
         ),
     ]
 
@@ -453,7 +401,6 @@ def collect_candidates_from_source(
                     "row_idx": row_idx,
                     "title_score": 0.0,
                     "skills_score": 0.0,
-                    "full_score": 0.0,
                 }
 
             candidates[key][score_name] = max(
@@ -464,12 +411,14 @@ def collect_candidates_from_source(
     return candidates
 
 
+
+
+
 def build_candidate_rows(
     candidates: dict[tuple[str, int], dict[str, Any]],
     runtime_indexes: list[RuntimeIndex],
     user_job_title: str,
     user_skills: list[str],
-    user_location: str,
 ) -> pd.DataFrame:
     runtime_map = {
         runtime.source_name: runtime
@@ -485,26 +434,28 @@ def build_candidate_rows(
         runtime = runtime_map[source_name]
         metadata_row = runtime.metadata.iloc[row_idx]
 
+        # Ho tro ca 2 schema: cu (job_title_canonical) va moi (title_core)
         job_title = normalize_text(
-            metadata_row.get("job_title_canonical", "")
+            metadata_row.get(
+                "job_title_canonical",
+                metadata_row.get("title_core", ""),
+            )
         )
 
-        job_location = normalize_text(
-            metadata_row.get("location_final", "")
-        )
-
+        # Ho tro ca 2 schema: cu (skills_canonical) va moi (skills_normalized)
         job_skills = parse_skills(
-            metadata_row.get("skills_canonical", [])
+            metadata_row.get(
+                "skills_canonical",
+                metadata_row.get("skills_normalized", []),
+            )
         )
 
         title_vector_score = safe_score(candidate["title_score"])
         skills_vector_score = safe_score(candidate["skills_score"])
-        full_vector_score = safe_score(candidate["full_score"])
 
         semantic_score = (
             INDEX_WEIGHTS["title_score"] * title_vector_score
             + INDEX_WEIGHTS["skills_score"] * skills_vector_score
-            + INDEX_WEIGHTS["full_score"] * full_vector_score
         )
 
         title_fuzzy = text_similarity(
@@ -517,16 +468,10 @@ def build_candidate_rows(
             job_skills,
         )
 
-        loc_score = location_score(
-            user_location,
-            job_location,
-        )
-
         base_score = (
             RERANK_WEIGHTS["semantic_score"] * semantic_score
             + RERANK_WEIGHTS["title_fuzzy_score"] * title_fuzzy
             + RERANK_WEIGHTS["skill_overlap_score"] * skill_overlap
-            + RERANK_WEIGHTS["location_score"] * loc_score
         )
 
         source_weight = safe_score(candidate["source_weight"])
@@ -544,26 +489,17 @@ def build_candidate_rows(
 
                 "title_vector_score": title_vector_score,
                 "skills_vector_score": skills_vector_score,
-                "full_vector_score": full_vector_score,
 
                 "title_fuzzy_score": title_fuzzy,
                 "skill_overlap_score": skill_overlap,
-                "location_score": loc_score,
 
-                "source_job_id": metadata_row.get("source_job_id", ""),
+                "source_job_id": metadata_row.get("source_job_id", metadata_row.get("job_id", "")),
                 "company": metadata_row.get("company", ""),
                 "job_title_canonical": job_title,
-                "occupation_group_final": metadata_row.get("occupation_group_final", ""),
-                "occupation_family_final": metadata_row.get("occupation_family_final", ""),
-                "seniority": metadata_row.get("seniority", ""),
-                "city_clean": metadata_row.get("city_clean", ""),
-                "country_clean": metadata_row.get("country_clean", ""),
-                "location_final": job_location,
                 "skills_canonical": job_skills,
-                "skills_count_final": metadata_row.get("skills_count_final", 0),
+                "skills_count_final": metadata_row.get("skills_count_final", len(job_skills)),
                 "job_url": metadata_row.get("job_url", ""),
                 "job_link": metadata_row.get("job_link", ""),
-                "crawl_batch": metadata_row.get("crawl_batch", ""),
             }
         )
 
@@ -730,7 +666,6 @@ def recommend_missing_skills(
 def recommend_jobs(
     job_title: str,
     skills: list[str] | str,
-    location: str,
     top_n_jobs: int = 10,
     top_n_skills: int = 10,
     source_top_k: dict[str, int] | None = None,
@@ -741,31 +676,28 @@ def recommend_jobs(
 
     Logic:
     1. Parse input
-    2. Build query text đúng format Gold
-    3. Encode 3 query texts
-    4. Search Kaggle index lấy Top 300
-    5. Search Crawler index lấy Top 50
-    6. Gộp thành tối đa 350 candidates
+    2. Build query text (title + skills)
+    3. Encode 2 query texts
+    4. Search Kaggle index lay Top 300
+    5. Search Crawler index lay Top 50
+    6. Gop thanh toi da 350 candidates
     7. Rerank 350 candidates
-    8. Lấy Top 10 jobs
-    9. Tính Top 10 missing skills từ toàn bộ 350 candidates
+    8. Lay Top 10 jobs
+    9. Tinh Top 10 missing skills tu toan bo 350 candidates
     """
     if source_top_k is None:
         source_top_k = SOURCE_TOP_K
 
     user_job_title = normalize_text(job_title)
     user_skills = parse_skills(skills)
-    user_location = normalize_text(location)
 
     print("Input:")
     print(f"- Job title: {user_job_title}")
     print(f"- Skills: {user_skills}")
-    print(f"- Location: {user_location}")
 
     query_texts = build_query_texts(
         job_title=user_job_title,
         skills=user_skills,
-        location=user_location,
     )
 
     print("\nQuery texts:")
@@ -785,10 +717,6 @@ def recommend_jobs(
             model=model,
             text=query_texts["skills_text"],
         ),
-        "full_text": encode_query(
-            model=model,
-            text=query_texts["full_text"],
-        ),
     }
 
     all_candidates = {}
@@ -797,8 +725,6 @@ def recommend_jobs(
         source_name = runtime.source_name
         top_k_for_source = source_top_k.get(source_name, 100)
 
-        # Để tránh sau khi dedup không đủ 300/50,
-        # search mỗi index nhiều hơn một chút.
         search_top_k_each_index = max(
             top_k_for_source * 2,
             top_k_for_source,
@@ -815,7 +741,7 @@ def recommend_jobs(
             top_k_each_index=search_top_k_each_index,
         )
 
-        print(f"Số candidates raw từ {source_name}: {len(source_candidates)}")
+        print(f"Candidates raw from {source_name}: {len(source_candidates)}")
 
         all_candidates.update(source_candidates)
 
@@ -824,7 +750,6 @@ def recommend_jobs(
         runtime_indexes=runtime_indexes,
         user_job_title=user_job_title,
         user_skills=user_skills,
-        user_location=user_location,
     )
 
     if all_jobs_df.empty:
@@ -843,7 +768,7 @@ def recommend_jobs(
 
     print("\nRerank pool by source:")
     print(rerank_pool_df["source_name"].value_counts())
-    print(f"Tổng số job trong rerank pool: {len(rerank_pool_df)}")
+    print(f"Total jobs in rerank pool: {len(rerank_pool_df)}")
 
     # Top jobs lấy từ pool sau rerank
     top_jobs_df = rerank_pool_df.sort_values(

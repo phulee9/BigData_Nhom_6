@@ -46,19 +46,16 @@ def get_emb_missing_skills(
     runtime_indexes,
     job_title: str,
     user_skills: list[str],
-    location: str = "Unknown",
 ) -> pd.DataFrame:
-    """Chạy embedding pipeline, trả về missing_skills DataFrame."""
+    """Chay embedding pipeline, tra ve missing_skills DataFrame."""
     query_texts = build_query_texts(
         job_title=job_title,
         skills=user_skills,
-        location=location,
     )
 
     query_embeddings = {
         "title_text": encode_query(model=model, text=query_texts["title_text"]),
         "skills_text": encode_query(model=model, text=query_texts["skills_text"]),
-        "full_text": encode_query(model=model, text=query_texts["full_text"]),
     }
 
     source_top_k = {"kaggle": KAGGLE_TOP_K, "crawler": CRAWLER_TOP_K}
@@ -81,7 +78,6 @@ def get_emb_missing_skills(
         runtime_indexes=runtime_indexes,
         user_job_title=job_title,
         user_skills=user_skills,
-        user_location=location,
     )
 
     if all_jobs_df.empty:
@@ -175,12 +171,12 @@ def main():
         # Print results
         print(f"\n{'='*60}")
         print(f"  BM25+ ({len(bm25_results)} skills):")
-        for i, r in enumerate(bm25_results[:5], 1):
+        for i, r in enumerate(bm25_results, 1):
             print(f"    {i}. {r['skill']}")
 
         emb_list = emb_results_df.to_dict("records") if not emb_results_df.empty else []
         print(f"\n  Embedding ({len(emb_list)} skills):")
-        for i, r in enumerate(emb_list[:5], 1):
+        for i, r in enumerate(emb_list, 1):
             print(f"    {i}. {r['skill']}")
 
         print(f"\n  🏆 HYBRID RRF ({len(hybrid_results)} skills):")
