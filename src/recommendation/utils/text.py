@@ -1,7 +1,6 @@
 """
-Text & Skill parsing utilities.
-
-Dùng chung cho model_bm25.py và recommend.py.
+Text and skill utilities.
+Dùng chung cho BM25, FAISS skill recommendation và job recommendation.
 """
 
 import ast
@@ -13,7 +12,7 @@ import pandas as pd
 
 
 def normalize_text_lower(value: Any) -> str:
-    """Chuẩn hóa text về lowercase, bỏ ký tự thừa."""
+    # Chuẩn hóa text về lowercase
     if value is None:
         return ""
 
@@ -26,28 +25,30 @@ def normalize_text_lower(value: Any) -> str:
     return text
 
 
-def parse_skills_lower(value: Any) -> list[str]:
-    """
-    Chuyển skills_canonical về list[str] lowercase.
+def normalize_token(value: Any) -> str:
+    # Chuẩn hóa token để so sánh skill
+    text = normalize_text_lower(value)
+    text = re.sub(r"[^a-z0-9+#.]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
 
-    Hỗ trợ: list, string dạng "['a','b']", string dạng "a, b".
-    """
+    return text
+
+
+def parse_skills_lower(value: Any) -> list[str]:
+    # Chuyển skills về list lowercase
     if value is None:
         return []
 
     if isinstance(value, float) and pd.isna(value):
         return []
 
-    if hasattr(value, 'tolist') and callable(value.tolist):
-        try:
-            value = value.tolist()
-        except Exception:
-            pass
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
 
-    if isinstance(value, list):
-        return [normalize_text_lower(s) for s in value if normalize_text_lower(s)]
+    if isinstance(value, (list, tuple, set)):
+        raw_skills = list(value)
 
-    if isinstance(value, str):
+    elif isinstance(value, str):
         text = value.strip()
 
         if text.lower() in ["", "[]", "nan", "none", "null"]:
@@ -57,13 +58,36 @@ def parse_skills_lower(value: Any) -> list[str]:
             parsed = ast.literal_eval(text)
 
             if isinstance(parsed, (list, tuple, set)):
-                return [normalize_text_lower(s) for s in parsed if normalize_text_lower(s)]
+                raw_skills = list(parsed)
+            else:
+                raw_skills = text.split(",")
+
         except Exception:
-            pass
+            raw_skills = text.split(",")
 
-        if "," in text:
-            return [s.strip().lower() for s in text.split(",") if s.strip()]
+    else:
+        raw_skills = [value]
 
-        return [text.lower()]
+    skills = []
 
-    return []
+    for skill in raw_skills:
+        skill = normalize_text_lower(skill)
+
+        if skill and skill not in skills:
+            skills.append(skill)
+
+    return skills
+
+
+def skills_to_text(skills: list[str]) -> str:
+    # Chuyển list skills thành text để đưa vào query
+    clean_skills = [
+        normalize_text_lower(skill)
+        for skill in skills
+        if normalize_text_lower(skill)
+    ]
+
+    if not clean_skills:
+        return "not specified"
+
+    return ", ".join(clean_skills)
