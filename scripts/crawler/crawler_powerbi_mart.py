@@ -171,7 +171,7 @@ def build_jobs_table(silver_df: pd.DataFrame) -> pd.DataFrame:
         "source_job_id": safe_col(silver_df, job_id_col).astype(str),
         "source": safe_col(silver_df, "source", "monster"),
         "company": safe_col(silver_df, "company"),
-        "job_title": safe_col(silver_df, "title_clean"),
+        "job_title": safe_col(silver_df, "title_core"),
         "seniority": safe_col(silver_df, "seniority"),
         "work_mode": safe_col(silver_df, "work_mode"),
         "employment_type": safe_col(silver_df, "employment_type"),
