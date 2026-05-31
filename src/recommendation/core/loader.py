@@ -130,7 +130,7 @@ def validate_runtime_index(
 # ── Index config sau khi load ──────────────────────────────────────────────
 
 # Config này phải khớp với config đã dùng trong benchmark
-_IVF_NPROBE   = 16   # benchmark_title.ipynb → best nprobe
+_IVF_NPROBE   = 8   # benchmark_title.ipynb → best nprobe
 _HNSW_EFSEARCH = 16  # benchmark_skills.ipynb → best efSearch
 
 def _configure_index(index: faiss.Index, label: str) -> None:
