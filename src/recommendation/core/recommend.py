@@ -17,7 +17,7 @@ from src.recommendation.utils.text import (
 
 
 # Đường dẫn Kaggle FAISS local
-DEFAULT_KAGGLE_RUNTIME_DIR = Path("data/downloads/kaggle/benchmark")
+DEFAULT_KAGGLE_RUNTIME_DIR = Path("data/downloads/kaggle/gold")
 
 
 # Hybrid đang dùng biến này
