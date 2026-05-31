@@ -24,48 +24,21 @@ LOCAL_JOB_SKILLS_PATH = f"{LOCAL_TEMP_DIR}/job_skills.csv"
 LOCAL_SILVER_OUTPUT_PATH = f"{LOCAL_TEMP_DIR}/jobs_silver.parquet"
 
 
-def download_file_robust(client, bucket_name, object_name, file_path):
-    print(f"📥 Đang tải {object_name} -> {file_path} (Stream 1MB)...")
-    response = None
-    try:
-        response = client.get_object(bucket_name, object_name)
-        with open(file_path, "wb") as file_data:
-            # Tải theo khối 1MB để đạt hiệu năng ghi đĩa và truyền tải tối đa
-            for chunk in response.stream(1024 * 1024):
-                file_data.write(chunk)
-        print(f"✅ Đã tải xong: {object_name}")
-    except PermissionError:
-        print(f"\n❌ LỖI KHÓA FILE (WinError 32): Không thể ghi vào file '{file_path}'.")
-        print("👉 Vui lòng đóng tất cả Jupyter Notebooks, Excel hoặc các tiến trình Python khác đang mở file này và thử lại.\n")
-        sys.exit(1)
-    except Exception as e:
-        import traceback
-        print(f"❌ Lỗi khi tải {object_name}: {e}")
-        print("\n🔍 Chi tiết lỗi (Traceback):")
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
-        if response:
-            response.close()
-            response.release_conn()
-
-
 def download_raw_files(client):
     # Tải dữ liệu raw từ Bronze
     os.makedirs(LOCAL_TEMP_DIR, exist_ok=True)
 
-    # Dọn dẹp các file cũ trước khi ghi
-    for path in [LOCAL_JOB_POSTINGS_PATH, LOCAL_JOB_SKILLS_PATH]:
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except PermissionError:
-                print(f"\n❌ LỖI KHÓA FILE (WinError 32): File '{path}' đang bị khóa bởi tiến trình khác.")
-                print("👉 Vui lòng tắt Jupyter Notebook, đóng Excel/VS Code và thử lại.\n")
-                sys.exit(1)
+    client.fget_object(
+        bucket_name=MINIO_BUCKET,
+        object_name=BRONZE_JOB_POSTINGS_PATH,
+        file_path=LOCAL_JOB_POSTINGS_PATH,
+    )
 
-    download_file_robust(client, MINIO_BUCKET, BRONZE_JOB_POSTINGS_PATH, LOCAL_JOB_POSTINGS_PATH)
-    download_file_robust(client, MINIO_BUCKET, BRONZE_JOB_SKILLS_PATH, LOCAL_JOB_SKILLS_PATH)
+    client.fget_object(
+        bucket_name=MINIO_BUCKET,
+        object_name=BRONZE_JOB_SKILLS_PATH,
+        file_path=LOCAL_JOB_SKILLS_PATH,
+    )
 
 
 def read_raw_files():

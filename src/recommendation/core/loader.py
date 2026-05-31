@@ -19,38 +19,41 @@ def load_runtime_index(
     runtime_dir: str | Path,
     source_weight: float = 1.0,
 ) -> RuntimeIndex:
-    """
-    Load metadata + 2 FAISS indexes:
-    - title index
-    - skills index
-
-    Ten file linh hoat:
-    - metadata: metadata.parquet hoac jobs_metadata.parquet
-    - title: title.faiss.index hoac title_faiss.index
-    - skills: skills.faiss.index hoac skills_faiss.index
-
-    Kiem tra: metadata rows = title vectors = skills vectors
-    """
     runtime_dir = Path(runtime_dir)
 
-    metadata_path = _find_file(
-        runtime_dir,
-        ["metadata.parquet", "jobs_metadata.parquet"],
-        required=True,
+    if not runtime_dir.exists():
+        raise FileNotFoundError(f"Runtime folder not found: {runtime_dir}")
+
+    metadata_path = find_first_existing_file(
+        base_dir=runtime_dir,
+        candidate_paths=[
+            "metadata.parquet",
+            "jobs_metadata.parquet",
+            "metadata/metadata.parquet",
+            "metadata/jobs_metadata.parquet",
+        ],
         label="metadata",
     )
 
-    title_index_path = _find_file(
-        runtime_dir,
-        ["title.faiss.index", "title_faiss.index"],
-        required=True,
+    title_index_path = find_first_existing_file(
+        base_dir=runtime_dir,
+        candidate_paths=[
+            "title.faiss.index",
+            "title_faiss.index",
+            "index/title.faiss.index",
+            "index/title_faiss.index",
+        ],
         label="title index",
     )
 
-    skills_index_path = _find_file(
-        runtime_dir,
-        ["skills.faiss.index", "skills_faiss.index"],
-        required=True,
+    skills_index_path = find_first_existing_file(
+        base_dir=runtime_dir,
+        candidate_paths=[
+            "skills.faiss.index",
+            "skills_faiss.index",
+            "index/skills.faiss.index",
+            "index/skills_faiss.index",
+        ],
         label="skills index",
     )
 
@@ -80,28 +83,24 @@ def load_runtime_index(
     )
 
 
-def _find_file(
-    directory: Path,
-    candidate_names: list[str],
-    required: bool,
+def find_first_existing_file(
+    base_dir: Path,
+    candidate_paths: list[str],
     label: str,
-) -> Path | None:
-    """
-    Tim file trong thu muc theo danh sach ten uu tien.
-    Tra ve path dau tien tim thay.
-    """
-    for name in candidate_names:
-        path = directory / name
-        if path.exists():
-            return path
+) -> Path:
+    checked_paths = []
 
-    if required:
-        raise FileNotFoundError(
-            f"Khong tim thay file {label} trong {directory}. "
-            f"Da tim: {candidate_names}"
-        )
+    for relative_path in candidate_paths:
+        full_path = base_dir / relative_path
+        checked_paths.append(str(full_path))
 
-    return None
+        if full_path.exists():
+            return full_path
+
+    raise FileNotFoundError(
+        f"Cannot find {label} in {base_dir}.\n"
+        f"Checked paths:\n- " + "\n- ".join(checked_paths)
+    )
 
 
 def validate_runtime_index(
@@ -110,21 +109,14 @@ def validate_runtime_index(
     title_index: faiss.Index,
     skills_index: faiss.Index,
 ) -> None:
-    """
-    Dam bao metadata va 2 index dong bo so dong/vector.
-    """
+    # Kiểm tra số dòng metadata có khớp số vector không
     metadata_rows = len(metadata)
-
     title_vectors = title_index.ntotal
     skills_vectors = skills_index.ntotal
 
-    if not (
-        metadata_rows
-        == title_vectors
-        == skills_vectors
-    ):
+    if metadata_rows != title_vectors or metadata_rows != skills_vectors:
         raise ValueError(
-            f"Runtime index khong dong bo cho source={source_name}. "
+            f"Runtime index is not synchronized for source={source_name}. "
             f"metadata={metadata_rows}, "
             f"title_index={title_vectors}, "
             f"skills_index={skills_vectors}"
