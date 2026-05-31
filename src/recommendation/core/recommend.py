@@ -23,7 +23,7 @@ from src.recommendation.core.loader import (
 # Runtime index paths
 
 
-DEFAULT_KAGGLE_RUNTIME_DIR = Path("data/runtime_index/kaggle")
+DEFAULT_KAGGLE_RUNTIME_DIR = Path("data/runtime_index/kaggle/benchmark")
 DEFAULT_CRAWLER_RUNTIME_DIR = Path("data/runtime_index/crawler")
 
 
@@ -332,16 +332,16 @@ def load_default_runtime_indexes() -> list[RuntimeIndex]:
     else:
         print(f"Skip Kaggle (folder not found): {DEFAULT_KAGGLE_RUNTIME_DIR}")
 
-    if DEFAULT_CRAWLER_RUNTIME_DIR.exists():
-        runtime_indexes.append(
-            load_runtime_index(
-                source_name="crawler",
-                runtime_dir=DEFAULT_CRAWLER_RUNTIME_DIR,
-                source_weight=SOURCE_WEIGHTS["crawler"],
-            )
-        )
-    else:
-        print(f"Skip Crawler (folder not found): {DEFAULT_CRAWLER_RUNTIME_DIR}")
+    # if DEFAULT_CRAWLER_RUNTIME_DIR.exists():
+    #     runtime_indexes.append(
+    #         load_runtime_index(
+    #             source_name="crawler",
+    #             runtime_dir=DEFAULT_CRAWLER_RUNTIME_DIR,
+    #             source_weight=SOURCE_WEIGHTS["crawler"],
+    #         )
+    #     )
+    # else:
+    #     print(f"Skip Crawler (folder not found): {DEFAULT_CRAWLER_RUNTIME_DIR}")
 
     if not runtime_indexes:
         raise FileNotFoundError(
