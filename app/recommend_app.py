@@ -51,7 +51,7 @@ TOP_JOBS = 10
 KAGGLE_TOP_K = 300
 CRAWLER_TOP_K = 50
 
-POWER_BI_URL = ""
+POWER_BI_URL = "https://app.powerbi.com/reportEmbed?reportId=0b985b96-9184-406d-a4c5-469eba46ecf0&autoAuth=true&ctid=e7572e92-7aee-4713-a3c4-ba64888ad45f"
 
 
 # =========================================================
