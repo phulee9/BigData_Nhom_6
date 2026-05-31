@@ -65,5 +65,3 @@ Thumbs.db
 # Crawler / LinkedIn local output
 linkedin_profile/
 linkedin_jobs.csv
-
-evaluate.ipynb

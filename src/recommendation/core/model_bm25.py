@@ -1,21 +1,5 @@
-"""
-Unified BM25Plus Document Recommender
-
-Dữ liệu đầu vào: Silver Kaggle (silver/kaggle/jobs_silver.parquet)
-  - Cột title:  title_core     (từ silver_builder.py → title_utils.py)
-  - Cột skills: skills_normalized (từ silver_builder.py → skill_mapping_applier.py)
-
-Mỗi role (title_core) = 1 document.
-Nội dung document = role_name tokens + skill tokens (giữ duplicates để BM25+ tính TF).
-Query = target_role + user_skills → BM25Plus score → extract missing skills.
-
-Lưu/load bằng pickle — không cần rebuild khi load.
-"""
-
 from __future__ import annotations
-
 from collections import defaultdict
-
 import pandas as pd
 from rank_bm25 import BM25Plus
 
@@ -28,48 +12,21 @@ from src.recommendation.utils.text import (
     parse_skills_lower,
 )
 
-# Đường dẫn Silver Kaggle (output của build_silver_jobs.py + apply_skill_mapping_to_silver.py)
 SILVER_KAGGLE_JOBS = "silver/kaggle/jobs_silver.parquet"
-
-# Tên cột trong Silver Kaggle (theo SILVER_COLUMNS trong silver_config.py)
 COL_TITLE = "title_core"
 COL_SKILLS = "skills_normalized"
-
+SCORE_THRESHOLD = 0.0
+MAX_SIMILAR_ROLES = 10
+ROLE_NAME_REPEAT = 2
 
 class BM25PlusRecommender:
-    """
-    Unified BM25Plus Recommender.
-
-    Pipeline dữ liệu (theo README):
-      build_silver_jobs.py  →  jobs_silver.parquet  (title_core, skills_normalized)
-      apply_skill_mapping   →  cập nhật skills_normalized
-
-    Workflow BM25+:
-    1. Mỗi role (title_core) = 1 document (tokens = role words + skill words)
-    2. Fit BM25Plus trên tất cả documents
-    3. Query = target_role + user_skills → BM25Plus score
-    4. Extract missing skills từ matched roles
-    """
-
-    SCORE_THRESHOLD = 0.0
-    MAX_SIMILAR_ROLES = 10
-    ROLE_NAME_REPEAT = 2
-
     def __init__(self):
         self._bm25: BM25Plus | None = None
         self._doc_roles: list[str] = []
         self._doc_skill_counts: list[dict] = []
         self._doc_job_counts: list[int] = []
 
-    # ────────────── Load ──────────────
-
     def load_from_minio(self, object_name: str | None = None) -> None:
-        """Đọc Silver Kaggle từ MinIO, build BM25Plus.
-
-        Parameters:
-            object_name: Đường dẫn MinIO tùy chỉnh.
-                         Mặc định = silver/kaggle/jobs_silver.parquet
-        """
         client = get_minio_client()
 
         target_path = object_name or SILVER_KAGGLE_JOBS
@@ -84,20 +41,11 @@ class BM25PlusRecommender:
         self._build_bm25(silver_df)
 
     def load_from_dataframe(self, df: pd.DataFrame) -> None:
-        """Build BM25Plus từ DataFrame (cần cột title_core, skills_normalized)."""
         self._build_bm25(df)
 
-    # ────────────── Build ──────────────
-
     def _build_bm25(self, df: pd.DataFrame) -> None:
-        """Build unified BM25Plus từ Silver data.
-
-        Yêu cầu cột: title_core, skills_normalized
-        (theo SILVER_COLUMNS trong src/config/silver_config.py)
-        """
         print("[BM25+] Building Unified Document Model...")
 
-        # Kiểm tra cột bắt buộc
         for col in [COL_TITLE, COL_SKILLS]:
             if col not in df.columns:
                 raise KeyError(
@@ -116,7 +64,6 @@ class BM25PlusRecommender:
             print("[BM25+] Không có dữ liệu hợp lệ.")
             return
 
-        # Lọc role < 3 jobs
         role_counts = df["role"].value_counts()
         valid_roles = role_counts[role_counts >= 3].index
         df = df[df["role"].isin(valid_roles)]
@@ -125,7 +72,6 @@ class BM25PlusRecommender:
             print("[BM25+] Không có role nào đủ >= 3 jobs.")
             return
 
-        # Group by role → skill counts
         df_exploded = df[["role", "skills_list"]].explode("skills_list")
         df_exploded = df_exploded.rename(columns={"skills_list": "skill"})
         df_exploded = df_exploded[df_exploded["skill"].str.len() > 0]
@@ -138,7 +84,6 @@ class BM25PlusRecommender:
 
         role_job_counts = df.groupby("role").size().to_dict()
 
-        # Build document tokens & fit BM25Plus
         doc_roles = []
         doc_skill_counts = []
         doc_job_counts = []
@@ -148,7 +93,7 @@ class BM25PlusRecommender:
             skill_count_dict = dict(zip(group["skill"], group["job_count"]))
             job_count = role_job_counts.get(role_name, 1)
 
-            tokens = role_name.split() * self.ROLE_NAME_REPEAT
+            tokens = role_name.split() * ROLE_NAME_REPEAT
             for skill, count in skill_count_dict.items():
                 tokens.extend(skill.split() * count)
 
@@ -157,7 +102,7 @@ class BM25PlusRecommender:
             doc_job_counts.append(job_count)
             doc_tokens.append(tokens)
 
-        print(f"[BM25+] Fitting BM25Plus on {len(doc_tokens)} documents...")
+        print(f"[BM25+] Fitting BM25Plus...")
         self._bm25 = BM25Plus(doc_tokens)
         self._doc_roles = doc_roles
         self._doc_skill_counts = doc_skill_counts
@@ -166,20 +111,13 @@ class BM25PlusRecommender:
         n_skills = len(set(s for sc in doc_skill_counts for s in sc))
         print(f"[BM25+] Done: {len(doc_roles)} roles, {n_skills} skills")
 
-    # ────────────── Query ──────────────
-
     def query(
         self,
         target_role: str,
         user_skills: list[str],
         top_k: int = 10,
     ) -> list[dict]:
-        """
-        Gợi ý skills còn thiếu cho target_role.
 
-        Returns:
-            List[dict] với keys: skill, recommend_score, job_count
-        """
         if self._bm25 is None:
             return []
 
@@ -190,35 +128,30 @@ class BM25PlusRecommender:
         ]
         user_skills_set = set(user_skills_normalized)
 
-        # Query tokens = role + skills
         query_tokens = target_role.split() + [
             token
             for skill in user_skills_normalized
             for token in skill.split()
         ]
 
-        # BM25Plus scoring
         scores = self._bm25.get_scores(query_tokens)
 
-        # Top matched roles
-        top_indices = scores.argsort()[::-1][:self.MAX_SIMILAR_ROLES]
+        top_indices = scores.argsort()[::-1][:MAX_SIMILAR_ROLES]
         matched_roles = [
             (idx, float(scores[idx]))
             for idx in top_indices
-            if float(scores[idx]) >= self.SCORE_THRESHOLD
+            if float(scores[idx]) >= SCORE_THRESHOLD
         ]
 
         if not matched_roles:
             return []
 
-        # Normalize scores to [0, 1]
         max_score = max(s for _, s in matched_roles)
         if max_score > 0:
             matched_roles = [
                 (idx, s / max_score) for idx, s in matched_roles
             ]
 
-        # Extract missing skills
         skill_scores: dict[str, float] = defaultdict(float)
         skill_job_count: dict[str, int] = defaultdict(int)
 
@@ -244,14 +177,10 @@ class BM25PlusRecommender:
         results.sort(key=lambda x: x["recommend_score"], reverse=True)
         return results[:top_k]
 
-    # ────────────── Tiện ích ──────────────
-
     def get_roles(self) -> list[str]:
-        """Trả về danh sách tất cả roles."""
         return sorted(self._doc_roles) if self._doc_roles else []
 
     def get_role_skills(self, role: str, top_k: int = 20) -> list[dict]:
-        """Trả về top skills của 1 role."""
         if self._bm25 is None:
             return []
 
@@ -259,7 +188,7 @@ class BM25PlusRecommender:
         scores = self._bm25.get_scores(role.split())
 
         top_idx = scores.argmax()
-        if scores[top_idx] < self.SCORE_THRESHOLD:
+        if scores[top_idx] < SCORE_THRESHOLD:
             return []
 
         skill_counts = self._doc_skill_counts[top_idx]
@@ -277,7 +206,6 @@ class BM25PlusRecommender:
         return results[:top_k]
 
     def find_similar_roles(self, role: str, top_k: int = 5) -> list[tuple[str, float]]:
-        """Tìm roles tương tự."""
         if self._bm25 is None:
             return []
 
@@ -288,5 +216,5 @@ class BM25PlusRecommender:
         return [
             (self._doc_roles[idx], float(scores[idx]))
             for idx in top_indices
-            if float(scores[idx]) >= self.SCORE_THRESHOLD
+            if float(scores[idx]) >= SCORE_THRESHOLD
         ]

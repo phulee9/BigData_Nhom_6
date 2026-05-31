@@ -1,18 +1,26 @@
-import json
-import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
-# Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
-from src.config import EMBEDDING_MODEL
-from src.recommendation.cv.cv_extractor import extract_cv_file
+from src.config import (
+    EMBEDDING_MODEL,
+    GOLD_KAGGLE_BM25_MODEL,
+)
+from src.storage.minio_client import (
+    get_minio_client,
+    download_pickle,
+)
+from src.recommendation.core.model_bm25 import BM25PlusRecommender
+from src.recommendation.core.hybrid_rrf import reciprocal_rank_fusion
 from src.recommendation.core.recommend import (
     SOURCE_TOP_K,
     build_query_texts,
@@ -24,69 +32,686 @@ from src.recommendation.core.recommend import (
     parse_skills,
     load_default_runtime_indexes,
 )
+from src.recommendation.core.recommend_job import (
+    load_crawler_runtime,
+    recommend_jobs_by_faiss,
+)
+from src.recommendation.cv.cv_extractor import extract_cv_file
 
 
-# Fixed config
-TOP_JOBS = 10
+load_dotenv()
+
+
+# =========================================================
+# Config
+# =========================================================
+
 TOP_SKILLS = 10
-
+TOP_JOBS = 10
 KAGGLE_TOP_K = 300
 CRAWLER_TOP_K = 50
 
-LOCAL_CV_UPLOAD_DIR = PROJECT_ROOT / "data" / "cv" / "uploads"
-
-POWER_BI_EMBED_URL = "https://app.powerbi.com/reportEmbed?reportId=121495bc-258e-4eda-8c82-40dc35465127&autoAuth=true&ctid=e7572e92-7aee-4713-a3c4-ba64888ad45f"
+POWER_BI_URL = "https://app.powerbi.com/reportEmbed?reportId=0b985b96-9184-406d-a4c5-469eba46ecf0&autoAuth=true&ctid=e7572e92-7aee-4713-a3c4-ba64888ad45f"
 
 
-# ─── Cache ────────────────────────────────────────────────────────────────────
+# =========================================================
+# Page setup
+# =========================================================
 
-@st.cache_resource
-def load_embedding_model():
-    return SentenceTransformer(EMBEDDING_MODEL)
+st.set_page_config(
+    page_title="Career Recommendation",
+    page_icon=None,
+    layout="wide",
+)
+
+st.markdown(
+    """
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    >
+    <style>
+        /* ====================================================
+           ROOT TOKENS
+        ==================================================== */
+        :root {
+            --bg-base:       #070b14;
+            --bg-surface:    #0d1424;
+            --bg-elevated:   #121c30;
+            --bg-hover:      #172135;
+
+            --border-subtle: #1a2640;
+            --border-mid:    #223050;
+            --border-accent: #3a4d7a;
+
+            --accent-primary: #6c8cf5;
+            --accent-glow:    rgba(108, 140, 245, 0.18);
+            --accent-green:   #34d399;
+            --accent-green-bg: rgba(52, 211, 153, 0.08);
+            --accent-amber:   #fbbf24;
+            --accent-rose:    #f87171;
+
+            --text-primary:   #e8edf8;
+            --text-secondary: #8496b8;
+            --text-muted:     #3f5173;
+            --text-faint:     #263347;
+
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+        }
+
+        /* ====================================================
+           GLOBAL RESET
+        ==================================================== */
+        html, body, [class*="css"] {
+            font-family: 'Sora', sans-serif !important;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .stApp {
+            background-color: var(--bg-base) !important;
+        }
+
+        /* Subtle grid texture overlay */
+        .stApp::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(var(--border-subtle) 1px, transparent 1px),
+                linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+            background-size: 48px 48px;
+            opacity: 0.3;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ====================================================
+           SIDEBAR
+        ==================================================== */
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #0b1120 0%, #0d1628 100%) !important;
+            border-right: 1px solid var(--border-subtle) !important;
+        }
+
+        section[data-testid="stSidebar"] > div {
+            padding: 1.6rem 1.2rem !important;
+        }
+
+        /* Sidebar labels */
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] .stMarkdown p {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 11.5px !important;
+            font-weight: 500 !important;
+            color: var(--text-secondary) !important;
+            letter-spacing: 0.2px;
+        }
+
+        /* Sidebar section heading */
+        section[data-testid="stSidebar"] h3 {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 9.5px !important;
+            font-weight: 700 !important;
+            color: var(--text-muted) !important;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 18px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        /* Inputs */
+        section[data-testid="stSidebar"] input,
+        section[data-testid="stSidebar"] textarea {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 13px !important;
+            background-color: var(--bg-elevated) !important;
+            border: 1px solid var(--border-mid) !important;
+            border-radius: var(--radius-md) !important;
+            color: var(--text-primary) !important;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        section[data-testid="stSidebar"] input:focus,
+        section[data-testid="stSidebar"] textarea:focus {
+            border-color: var(--accent-primary) !important;
+            box-shadow: 0 0 0 3px var(--accent-glow) !important;
+            outline: none;
+        }
+
+        /* ====================================================
+           BUTTONS
+        ==================================================== */
+        .stButton > button[kind="primary"] {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 12.5px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0.3px;
+            background: linear-gradient(135deg, #4f6de0 0%, #7c5cc4 100%) !important;
+            color: #ffffff !important;
+            border: none !important;
+            border-radius: var(--radius-md) !important;
+            padding: 10px 22px !important;
+            transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s !important;
+            box-shadow: 0 4px 18px rgba(99, 102, 241, 0.25) !important;
+        }
+
+        .stButton > button[kind="primary"]:hover {
+            opacity: 0.9 !important;
+            transform: translateY(-1px) !important;
+            box-shadow: 0 6px 24px rgba(99, 102, 241, 0.38) !important;
+        }
+
+        .stButton > button[kind="primary"]:active {
+            transform: translateY(0) !important;
+        }
+
+        .stButton > button {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 12px !important;
+            font-weight: 500 !important;
+            border-radius: var(--radius-md) !important;
+            border: 1px solid var(--border-mid) !important;
+            background-color: var(--bg-elevated) !important;
+            color: var(--text-secondary) !important;
+            transition: border-color 0.2s, color 0.2s !important;
+        }
+
+        .stButton > button:hover {
+            border-color: var(--accent-primary) !important;
+            color: var(--text-primary) !important;
+        }
+
+        /* ====================================================
+           MAIN LAYOUT
+        ==================================================== */
+        .block-container {
+            padding: 2.2rem 2.8rem !important;
+            max-width: 1300px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ====================================================
+           HEADER BLOCK
+        ==================================================== */
+        .app-header {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .page-eyebrow {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--accent-primary);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+            opacity: 0.8;
+        }
+
+        .page-title {
+            font-family: 'Sora', sans-serif;
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.6px;
+            line-height: 1.15;
+            margin: 0;
+        }
+
+        .page-title span {
+            background: linear-gradient(90deg, #6c8cf5, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .page-sub {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .status-dot {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: 'Sora', sans-serif;
+            font-size: 11px;
+            color: var(--accent-green);
+            font-weight: 500;
+        }
+
+        .status-dot::before {
+            content: '';
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 6px var(--accent-green);
+        }
+
+        /* ====================================================
+           METRIC CARDS
+        ==================================================== */
+        .metric-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+
+        .metric-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 16px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: border-color 0.25s;
+        }
+
+        .metric-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #4f6de0, #7c5cc4, transparent);
+            opacity: 0.6;
+        }
+
+        .metric-card:hover {
+            border-color: var(--border-accent);
+        }
+
+        .metric-lbl {
+            font-family: 'Sora', sans-serif;
+            font-size: 9.5px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .metric-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 28px;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1;
+        }
+
+        .metric-val-text {
+            font-family: 'Sora', sans-serif;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+            line-height: 1.3;
+        }
+
+        .metric-icon {
+            position: absolute;
+            bottom: 14px;
+            right: 16px;
+            font-size: 22px;
+            opacity: 0.08;
+        }
+
+        /* ====================================================
+           SECTION LABELS
+        ==================================================== */
+        .section-title {
+            font-family: 'Sora', sans-serif;
+            font-size: 9.5px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1.3px;
+            margin-bottom: 4px;
+        }
+
+        .section-note {
+            font-family: 'Sora', sans-serif;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+            margin-top: 4px;
+        }
+
+        /* ====================================================
+           RESULT CARDS
+        ==================================================== */
+        .result-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 14px 18px;
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            margin-bottom: 8px;
+            transition: border-color 0.2s, background 0.2s, transform 0.15s;
+        }
+
+        .result-card:hover {
+            border-color: var(--border-accent);
+            background: var(--bg-hover);
+            transform: translateX(3px);
+        }
+
+        .result-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-faint);
+            min-width: 24px;
+            padding-top: 3px;
+        }
+
+        .result-body { flex: 1; }
+
+        .result-name {
+            font-family: 'Sora', sans-serif;
+            font-size: 14.5px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            letter-spacing: -0.1px;
+        }
+
+        .result-meta {
+            font-family: 'Sora', sans-serif;
+            font-size: 11.5px;
+            color: var(--text-muted);
+            line-height: 1.7;
+        }
+
+        .result-right {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+        }
+
+        /* Score badges */
+        .score-badge {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+            background: var(--accent-green-bg);
+            color: var(--accent-green);
+            border: 1px solid rgba(52, 211, 153, 0.25);
+            letter-spacing: 0.3px;
+        }
+
+        .score-badge-blue {
+            background: rgba(108, 140, 245, 0.08);
+            color: var(--accent-primary);
+            border: 1px solid rgba(108, 140, 245, 0.2);
+        }
+
+        /* Rank pills */
+        .rank-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-subtle);
+            color: var(--text-muted);
+        }
+
+        .job-link {
+            font-family: 'Sora', sans-serif;
+            font-size: 11.5px;
+            font-weight: 500;
+            color: var(--accent-primary);
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.2s;
+            padding-bottom: 1px;
+        }
+
+        .job-link:hover {
+            border-color: var(--accent-primary);
+        }
+
+        /* ====================================================
+           DIVIDER
+        ==================================================== */
+        .divider {
+            height: 1px;
+            background: var(--border-subtle);
+            margin: 22px 0;
+        }
+
+        /* ====================================================
+           TABS
+        ==================================================== */
+        .stTabs [data-baseweb="tab-list"] {
+            background: transparent !important;
+            border-bottom: 1px solid var(--border-subtle) !important;
+            gap: 0 !important;
+        }
+
+        .stTabs [data-baseweb="tab"] {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 12.5px !important;
+            font-weight: 500 !important;
+            color: var(--text-muted) !important;
+            background: transparent !important;
+            border: none !important;
+            padding: 10px 20px !important;
+            border-bottom: 2px solid transparent !important;
+            letter-spacing: 0.1px;
+            transition: color 0.2s !important;
+        }
+
+        .stTabs [aria-selected="true"] {
+            font-weight: 600 !important;
+            color: var(--text-primary) !important;
+            border-bottom: 2px solid var(--accent-primary) !important;
+        }
+
+        .stTabs [data-baseweb="tab-highlight"] { display: none !important; }
+
+        /* ====================================================
+           ALERTS
+        ==================================================== */
+        .stAlert {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 12.5px !important;
+            border-radius: var(--radius-md) !important;
+            background-color: var(--bg-surface) !important;
+            color: var(--text-secondary) !important;
+            border: 1px solid var(--border-mid) !important;
+        }
+
+        /* ====================================================
+           RADIO
+        ==================================================== */
+        .stRadio > div {
+            flex-direction: row !important;
+            gap: 8px !important;
+        }
+
+        .stRadio label {
+            background: var(--bg-elevated) !important;
+            border: 1px solid var(--border-mid) !important;
+            border-radius: var(--radius-sm) !important;
+            padding: 6px 14px !important;
+            font-size: 12px !important;
+            font-weight: 500 !important;
+            color: var(--text-secondary) !important;
+            transition: all 0.2s !important;
+            cursor: pointer;
+        }
+
+        .stRadio label:hover {
+            border-color: var(--accent-primary) !important;
+            color: var(--text-primary) !important;
+        }
+
+        /* ====================================================
+           FILE UPLOADER
+        ==================================================== */
+        [data-testid="stFileUploader"] {
+            background: var(--bg-elevated) !important;
+            border: 1px dashed var(--border-accent) !important;
+            border-radius: var(--radius-md) !important;
+        }
+
+        /* ====================================================
+           SPINNER
+        ==================================================== */
+        .stSpinner > div {
+            font-family: 'Sora', sans-serif !important;
+            font-size: 13px !important;
+            color: var(--text-muted) !important;
+        }
+
+        /* ====================================================
+           POWER BI WRAPPER
+        ==================================================== */
+        .pbi-wrap {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+        }
+
+        .pbi-empty {
+            height: 300px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .pbi-empty-icon {
+            font-size: 32px;
+            opacity: 0.15;
+        }
+
+        .pbi-empty-text {
+            font-family: 'Sora', sans-serif;
+            font-size: 12px;
+            color: var(--text-faint);
+            text-align: center;
+        }
+
+        .pbi-empty-code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-primary);
+            opacity: 0.7;
+        }
+
+        /* ====================================================
+           MISC
+        ==================================================== */
+        #MainMenu, footer, header { visibility: hidden; }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-accent);
+            border-radius: 4px;
+        }
+
+        /* Sidebar logo/brand area */
+        .brand-mark {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 22px;
+            padding-bottom: 18px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .brand-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #4f6de0, #7c5cc4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+        }
+
+        .brand-name {
+            font-family: 'Sora', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: -0.2px;
+        }
+
+        .brand-version {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: var(--text-muted);
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-@st.cache_resource
-def load_runtime_indexes_cached():
-    return load_default_runtime_indexes()
+# =========================================================
+# Load resources
+# =========================================================
 
-
-# ─── CV utilities ─────────────────────────────────────────────────────────────
-
-def save_uploaded_cv(uploaded_file) -> Path:
-    LOCAL_CV_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    safe_name = uploaded_file.name.replace(" ", "_")
-    target_path = LOCAL_CV_UPLOAD_DIR / safe_name
-    with open(target_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-    return target_path
-
-
-# ─── Recommendation core ──────────────────────────────────────────────────────
-
-def run_recommend_once(
-    model: SentenceTransformer,
-    runtime_indexes,
-    input_data: dict,
-) -> dict[str, pd.DataFrame]:
-    user_job_title = str(input_data["job_title"] or "").strip()
-    user_skills = parse_skills(input_data["skills"])
-    user_location = str(input_data["location"] or "Unknown").strip()
-
-    query_texts = build_query_texts(
-        job_title=user_job_title,
-        skills=user_skills,
-        location=user_location,
+@st.cache_resource(show_spinner=False)
+def load_skill_resources():
+    client = get_minio_client()
+    bm25_recommender: BM25PlusRecommender = download_pickle(
+        client=client,
+        object_name=GOLD_KAGGLE_BM25_MODEL,
     )
+    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+    runtime_indexes = load_default_runtime_indexes()
+    return bm25_recommender, embedding_model, runtime_indexes
 
+
+@st.cache_resource(show_spinner=False)
+def load_job_resources():
+    embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+    crawler_runtime = load_crawler_runtime()
+    return embedding_model, crawler_runtime
+
+
+# =========================================================
+# Recommendation functions
+# =========================================================
+
+def get_embedding_missing_skills(model, runtime_indexes, job_title, user_skills):
+    query_texts = build_query_texts(job_title=job_title, skills=user_skills)
     query_embeddings = {
         "title_text": encode_query(model=model, text=query_texts["title_text"]),
         "skills_text": encode_query(model=model, text=query_texts["skills_text"]),
-        "full_text": encode_query(model=model, text=query_texts["full_text"]),
     }
-
-    all_candidates = {}
     source_top_k = {"kaggle": KAGGLE_TOP_K, "crawler": CRAWLER_TOP_K}
-
+    all_candidates = {}
     for runtime in runtime_indexes:
         source_name = runtime.source_name
         target_top_k = source_top_k.get(source_name, SOURCE_TOP_K.get(source_name, 100))
@@ -96,557 +721,287 @@ def run_recommend_once(
             top_k_each_index=target_top_k * 2,
         )
         all_candidates.update(source_candidates)
-
     all_jobs_df = build_candidate_rows(
         candidates=all_candidates,
         runtime_indexes=runtime_indexes,
-        user_job_title=user_job_title,
+        user_job_title=job_title,
         user_skills=user_skills,
-        user_location=user_location,
     )
-
     if all_jobs_df.empty:
-        return {"top_jobs": pd.DataFrame(), "missing_skills": pd.DataFrame(), "rerank_pool": pd.DataFrame()}
-
-    rerank_pool_df = limit_candidates_by_source(candidates_df=all_jobs_df, source_limits=source_top_k)
-
-    top_jobs_df = (
-        rerank_pool_df
-        .sort_values(by="final_score", ascending=False)
-        .head(TOP_JOBS)
-        .copy()
+        return pd.DataFrame()
+    rerank_pool_df = limit_candidates_by_source(
+        candidates_df=all_jobs_df, source_limits=source_top_k
+    )
+    return recommend_missing_skills(
+        recommended_jobs=rerank_pool_df, user_skills=user_skills, top_n=TOP_SKILLS
     )
 
-    missing_skills_df = recommend_missing_skills(
-        recommended_jobs=rerank_pool_df,
-        user_skills=user_skills,
-        top_n=TOP_SKILLS,
+
+def recommend_missing_skills_hybrid(job_title, skills):
+    bm25_recommender, embedding_model, runtime_indexes = load_skill_resources()
+    bm25_results = bm25_recommender.query(
+        target_role=job_title, user_skills=skills, top_k=TOP_SKILLS
+    )
+    embedding_results = get_embedding_missing_skills(
+        model=embedding_model,
+        runtime_indexes=runtime_indexes,
+        job_title=job_title,
+        user_skills=skills,
+    )
+    return reciprocal_rank_fusion(
+        bm25_skills=bm25_results, emb_skills=embedding_results, top_k=TOP_SKILLS
     )
 
-    return {"top_jobs": top_jobs_df, "missing_skills": missing_skills_df, "rerank_pool": rerank_pool_df}
+
+def recommend_jobs(job_title, skills, location):
+    job_model, crawler_runtime = load_job_resources()
+    return recommend_jobs_by_faiss(
+        model=job_model,
+        runtime=crawler_runtime,
+        job_title=job_title,
+        skills=skills,
+        location=location,
+        top_k_each_index=100,
+        top_n=TOP_JOBS,
+    )
 
 
-# ─── Display utilities ────────────────────────────────────────────────────────
+# =========================================================
+# Input helpers
+# =========================================================
 
-def get_job_link(row: pd.Series) -> str:
-    for col in ("job_url", "job_link"):
-        val = str(row.get(col, "") or "").strip()
-        if val:
-            return val
-    return ""
+def split_skills(skills_text):
+    if not skills_text:
+        return []
+    return [s.strip() for s in skills_text.split(",") if s.strip()]
 
 
-def show_job_cards(top_jobs: pd.DataFrame) -> None:
-    if top_jobs.empty:
-        st.warning("No matching jobs found.")
+def save_uploaded_cv(uploaded_file):
+    suffix = Path(uploaded_file.name).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+        f.write(uploaded_file.getvalue())
+        return Path(f.name)
+
+
+# =========================================================
+# Render helpers
+# =========================================================
+
+def render_skill_results(results):
+    if not results:
+        st.info("Chưa có dữ liệu. Nhập thông tin và nhấn Chạy gợi ý.")
         return
-
-    for idx, row in top_jobs.reset_index(drop=True).iterrows():
-        title    = str(row.get("job_title_canonical", "") or "Unknown").strip()
-        company  = str(row.get("company", "")            or "Unknown Company").strip()
-        location = str(row.get("location_final", "")    or "Unknown").strip()
-        source   = str(row.get("source_name", "")       or "").strip()
-        score    = float(row.get("final_score", 0) or 0)
-        link     = get_job_link(row)
-
-        score_pct = min(int(score * 100), 100)
-        score_color = "#10b981" if score_pct >= 70 else "#f59e0b" if score_pct >= 40 else "#6b7280"
-
-        with st.container():
-            st.markdown(
-                f"""
-                <div class="job-card">
-                    <div class="job-card-header">
-                        <div class="job-rank">#{idx + 1}</div>
-                        <div class="job-info">
-                            <div class="job-title">{title}</div>
-                            <div class="job-meta">
-                                <span class="meta-item">🏢 {company}</span>
-                                <span class="meta-divider">·</span>
-                                <span class="meta-item">📍 {location}</span>
-                                <span class="meta-divider">·</span>
-                                <span class="meta-badge">{source.upper()}</span>
-                            </div>
-                        </div>
-                        <div class="job-score" style="color:{score_color};">
-                            <div class="score-number">{score_pct}%</div>
-                            <div class="score-label">Match</div>
-                        </div>
-                    </div>
-                    <div class="score-bar-track">
-                        <div class="score-bar-fill" style="width:{score_pct}%; background:{score_color};"></div>
+    for i, item in enumerate(results, start=1):
+        skill = item.get("skill", "")
+        score = item.get("rrf_score", 0)
+        job_count = item.get("job_count", 0)
+        bm25_rank = item.get("bm25_rank") or "—"
+        emb_rank = item.get("emb_rank") or "—"
+        badge_class = "score-badge" if i <= 5 else "score-badge score-badge-blue"
+        st.markdown(
+            f"""
+            <div class="result-card">
+                <span class="result-num">{i:02d}</span>
+                <div class="result-body">
+                    <div class="result-name">{skill}</div>
+                    <div class="result-meta">
+                        <span class="rank-pill">BM25 #{bm25_rank}</span>&nbsp;
+                        <span class="rank-pill">Emb #{emb_rank}</span>&nbsp;
+                        <span class="rank-pill">{job_count} jobs</span>
                     </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if link:
-                st.link_button("View Job →", link, use_container_width=False)
-            st.markdown("<div style='margin-bottom:10px'></div>", unsafe_allow_html=True)
+                <div class="result-right">
+                    <span class="{badge_class}">{score:.4f}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
-def show_missing_skills(missing_skills: pd.DataFrame) -> None:
-    if missing_skills.empty:
-        st.info("No skill gaps detected.")
+def render_job_results(jobs):
+    if jobs is None or (isinstance(jobs, pd.DataFrame) and jobs.empty):
+        st.info("Chưa có dữ liệu. Nhập thông tin và nhấn Chạy gợi ý.")
         return
-
-    skills = [
-        str(row.get("skill", "") or "").strip()
-        for _, row in missing_skills.iterrows()
-        if str(row.get("skill", "") or "").strip()
-    ]
-
-    tags_html = "".join(
-        f'<span class="skill-tag"><span class="skill-num">{i+1}</span>{skill}</span>'
-        for i, skill in enumerate(skills)
-    )
-    st.markdown(f'<div class="skills-grid">{tags_html}</div>', unsafe_allow_html=True)
-
-
-def show_powerbi_embed() -> None:
-    st.components.v1.iframe(POWER_BI_EMBED_URL, height=720, scrolling=True)
-
-
-# ─── Styles ───────────────────────────────────────────────────────────────────
-
-STYLES = """
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'DM Sans', sans-serif;
-}
-
-/* ── Page background ── */
-.stApp {
-    background: #0f1117;
-    color: #e2e8f0;
-}
-
-/* ── Hide Streamlit chrome ── */
-#MainMenu, footer, header { visibility: hidden; }
-.block-container { padding: 2rem 2.5rem 3rem; max-width: 1400px; }
-
-/* ── Top header ── */
-.page-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 28px 0 20px;
-    border-bottom: 1px solid #1e2535;
-    margin-bottom: 28px;
-}
-.header-icon {
-    width: 48px; height: 48px;
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-    border-radius: 14px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; flex-shrink: 0;
-}
-.header-text h1 {
-    margin: 0; font-size: 26px; font-weight: 700;
-    background: linear-gradient(90deg, #e2e8f0, #94a3b8);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    letter-spacing: -0.4px;
-}
-.header-text p {
-    margin: 2px 0 0; font-size: 14px; color: #64748b; font-weight: 400;
-}
-
-/* ── Section labels ── */
-.section-label {
-    font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
-    color: #475569; text-transform: uppercase; margin-bottom: 14px;
-}
-
-/* ── Input panel ── */
-.input-panel {
-    background: #161b27;
-    border: 1px solid #1e2535;
-    border-radius: 16px;
-    padding: 24px;
-    height: 100%;
-}
-
-/* ── Streamlit inputs override ── */
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background: #0f1117 !important;
-    border: 1px solid #1e2535 !important;
-    border-radius: 10px !important;
-    color: #e2e8f0 !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 14px !important;
-    padding: 10px 14px !important;
-}
-.stTextInput > div > div > input:focus,
-.stTextArea > div > div > textarea:focus {
-    border-color: #3b82f6 !important;
-    box-shadow: 0 0 0 3px rgba(59,130,246,0.15) !important;
-}
-label[data-testid="stWidgetLabel"] p {
-    font-size: 12px !important;
-    font-weight: 600 !important;
-    color: #94a3b8 !important;
-    letter-spacing: 0.3px !important;
-    text-transform: uppercase !important;
-}
-
-/* ── Radio ── */
-.stRadio > div { gap: 8px; }
-.stRadio > div > label {
-    background: #0f1117 !important;
-    border: 1px solid #1e2535 !important;
-    border-radius: 8px !important;
-    padding: 6px 16px !important;
-    color: #94a3b8 !important;
-    font-size: 13px !important;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-.stRadio > div > label:has(input:checked) {
-    border-color: #3b82f6 !important;
-    color: #3b82f6 !important;
-    background: rgba(59,130,246,0.08) !important;
-}
-
-/* ── Primary button ── */
-.stButton > button[kind="primary"] {
-    background: linear-gradient(135deg, #3b82f6, #6366f1) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 10px !important;
-    font-size: 14px !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.2px !important;
-    padding: 12px 24px !important;
-    transition: all 0.2s !important;
-    box-shadow: 0 4px 20px rgba(99,102,241,0.35) !important;
-}
-.stButton > button[kind="primary"]:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 8px 28px rgba(99,102,241,0.5) !important;
-}
-
-/* ── Tabs ── */
-.stTabs [data-baseweb="tab-list"] {
-    background: #161b27 !important;
-    border-radius: 12px !important;
-    padding: 4px !important;
-    gap: 4px !important;
-    border: 1px solid #1e2535 !important;
-}
-.stTabs [data-baseweb="tab"] {
-    background: transparent !important;
-    border-radius: 8px !important;
-    color: #64748b !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-    padding: 8px 20px !important;
-    border: none !important;
-}
-.stTabs [aria-selected="true"] {
-    background: #1e2535 !important;
-    color: #e2e8f0 !important;
-}
-
-/* ── Job card ── */
-.job-card {
-    background: #161b27;
-    border: 1px solid #1e2535;
-    border-radius: 14px;
-    padding: 18px 20px 14px;
-    margin-bottom: 4px;
-    transition: border-color 0.2s, transform 0.15s;
-}
-.job-card:hover {
-    border-color: #334155;
-    transform: translateX(2px);
-}
-.job-card-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 14px;
-}
-.job-rank {
-    font-family: 'DM Mono', monospace;
-    font-size: 13px;
-    color: #475569;
-    min-width: 26px;
-    padding-top: 3px;
-}
-.job-info { flex: 1; min-width: 0; }
-.job-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #e2e8f0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 6px;
-}
-.job-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-}
-.meta-item { font-size: 12px; color: #64748b; }
-.meta-divider { color: #334155; font-size: 12px; }
-.meta-badge {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    color: #3b82f6;
-    background: rgba(59,130,246,0.1);
-    border: 1px solid rgba(59,130,246,0.2);
-    border-radius: 4px;
-    padding: 1px 6px;
-}
-.job-score {
-    text-align: center;
-    min-width: 52px;
-}
-.score-number {
-    font-size: 17px;
-    font-weight: 700;
-    font-family: 'DM Mono', monospace;
-    line-height: 1.1;
-}
-.score-label {
-    font-size: 10px;
-    color: #475569;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-top: 1px;
-}
-.score-bar-track {
-    height: 3px;
-    background: #1e2535;
-    border-radius: 99px;
-    margin-top: 12px;
-    overflow: hidden;
-}
-.score-bar-fill {
-    height: 100%;
-    border-radius: 99px;
-    transition: width 0.6s ease;
-}
-
-/* ── Skills grid ── */
-.skills-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 4px;
-}
-.skill-tag {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #161b27;
-    border: 1px solid #1e2535;
-    border-radius: 10px;
-    padding: 8px 14px;
-    font-size: 13px;
-    color: #cbd5e1;
-    font-weight: 500;
-    transition: border-color 0.2s;
-}
-.skill-tag:hover { border-color: #3b82f6; color: #e2e8f0; }
-.skill-num {
-    font-family: 'DM Mono', monospace;
-    font-size: 11px;
-    color: #3b82f6;
-    font-weight: 600;
-    min-width: 14px;
-}
-
-/* ── Dividers ── */
-.divider {
-    height: 1px;
-    background: #1e2535;
-    margin: 20px 0;
-}
-
-/* ── Result pane ── */
-.result-panel {
-    padding-left: 8px;
-}
-
-/* ── Spinner ── */
-.stSpinner > div { border-top-color: #3b82f6 !important; }
-
-/* ── File uploader ── */
-[data-testid="stFileUploader"] {
-    background: #0f1117 !important;
-    border: 1px dashed #1e2535 !important;
-    border-radius: 12px !important;
-    color: #64748b !important;
-}
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #0f1117; }
-::-webkit-scrollbar-thumb { background: #1e2535; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #334155; }
-</style>
-"""
+    for i, row in jobs.reset_index(drop=True).iterrows():
+        title = str(row.get("title", "") or "").strip()
+        location_raw = str(row.get("location_raw", "") or "").strip()
+        score = float(row.get("score", 0) or 0)
+        link = str(row.get("link", "") or "").strip()
+        badge_class = "score-badge" if i < 5 else "score-badge score-badge-blue"
+        link_html = (
+            f'<a class="job-link" href="{link}" target="_blank">Xem tin tuyển dụng</a>'
+            if link else ""
+        )
+        st.markdown(
+            f"""
+            <div class="result-card">
+                <span class="result-num">{i+1:02d}</span>
+                <div class="result-body">
+                    <div class="result-name">{title}</div>
+                    <div class="result-meta">{location_raw}</div>
+                    {link_html}
+                </div>
+                <div class="result-right">
+                    <span class="{badge_class}">{score:.4f}</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+def render_power_bi():
+    if not POWER_BI_URL:
+        st.markdown(
+            """
+            <div class="pbi-wrap">
+                <div class="pbi-empty">
+                    <div class="pbi-empty-text">
+                        Chưa có báo cáo Power BI<br>
+                        <span class="pbi-empty-code">Điền POWER_BI_URL để kích hoạt</span>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+    st.markdown('<div class="pbi-wrap">', unsafe_allow_html=True)
+    components.iframe(POWER_BI_URL, height=500, scrolling=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-def main():
-    st.set_page_config(
-        page_title="Job & Skill Recommendation",
-        page_icon="💼",
-        layout="wide",
-        initial_sidebar_state="collapsed",
-    )
 
-    st.markdown(STYLES, unsafe_allow_html=True)
+# =========================================================
+# Sidebar
+# =========================================================
 
-    # Header
+with st.sidebar:
     st.markdown(
         """
-        <div class="page-header">
-            <div class="header-icon">💼</div>
-            <div class="header-text">
-                <h1>Job & Skill Recommendation</h1>
-                <p>Powered by semantic search · Kaggle historical jobs + Crawler recent jobs</p>
+        <div class="brand-mark">
+            <div class="brand-icon"></div>
+            <div>
+                <div class="brand-name">CareerAI</div>
+                <div class="brand-version">v2.0  BM25 + RRF</div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Loading model and indexes..."):
-        model = load_embedding_model()
-        runtime_indexes = load_runtime_indexes_cached()
+    st.markdown("### Thông tin đầu vào")
 
-    tab_recommend, tab_powerbi = st.tabs(["  Recommendation  ", "  Power BI Dashboard  "])
+    input_mode = st.radio(
+        "Chế độ nhập",
+        ["Nhập tay", "Trích xuất từ CV"],
+        label_visibility="collapsed",
+        horizontal=True,
+    )
 
-    # ── TAB 1: Recommendation ──────────────────────────────────────────────────
-    with tab_recommend:
-        left_col, right_col = st.columns([1, 1.4], gap="large")
+    job_title = ""
+    skills_text = ""
+    location = ""
 
-        # INPUT PANEL
-        with left_col:
-            st.markdown('<div class="section-label">Input</div>', unsafe_allow_html=True)
+    if input_mode == "Nhập tay":
+        job_title = st.text_input("Job title", placeholder="VD: Data Analyst, Backend Developer")
+        skills_text = st.text_area("Skills hiện có", placeholder="VD: Python, SQL, Excel", height=110)
+        location = st.text_input("Location", placeholder="VD: Hanoi, Ho Chi Minh")
 
-            input_mode = st.radio(
-                "Input method",
-                ["Manual entry", "Upload CV (PDF)"],
-                horizontal=True,
-                label_visibility="collapsed",
+    else:
+        uploaded_cv = st.file_uploader("Upload CV (PDF)", type=["pdf"])
+        if uploaded_cv is not None:
+            if st.button("Trích xuất CV", use_container_width=True):
+                with st.spinner("Đang đọc CV..."):
+                    temp_cv_path = save_uploaded_cv(uploaded_cv)
+                    extracted = extract_cv_file(temp_cv_path)
+                    st.session_state["cv_job_title"] = extracted.get("job_title", "")
+                    st.session_state["cv_skills"] = ", ".join(extracted.get("current_skills", []))
+                    st.session_state["cv_location"] = extracted.get("location", "")
+
+        job_title = st.text_input("Job title", value=st.session_state.get("cv_job_title", ""))
+        skills_text = st.text_area("Skills", value=st.session_state.get("cv_skills", ""), height=110)
+        location = st.text_input("Location", value=st.session_state.get("cv_location", ""))
+
+    run_button = st.button("Chạy gợi ý", type="primary", use_container_width=True)
+
+
+skills = split_skills(skills_text)
+
+
+# =========================================================
+# Main content
+# =========================================================
+
+st.markdown(
+    f"""
+    <div class="app-header">
+        <div>
+            <div class="page-eyebrow">Career Intelligence</div>
+            <div class="page-title">Career <span>Recommendation</span></div>
+            <div class="page-sub">BM25 + Sentence Embedding + Reciprocal Rank Fusion</div>
+        </div>
+        <div class="status-dot">System online</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    f"""
+    <div class="metric-row">
+        <div class="metric-card">
+            <div class="metric-lbl">Target role</div>
+            <div class="metric-val-text">{job_title or "—"}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-lbl">Skills hiện có</div>
+            <div class="metric-val">{len(skills)}</div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-lbl">Location</div>
+            <div class="metric-val-text">{location or "Tất cả"}</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <div class="section-title">Market Intelligence</div>
+    <div class="section-note">Báo cáo thị trường lao động — Power BI</div>
+    """,
+    unsafe_allow_html=True,
+)
+render_power_bi()
+
+st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+if run_button:
+    if not job_title:
+        st.warning("Vui lòng nhập job title.")
+    else:
+        with st.spinner("Đang phân tích và xếp hạng..."):
+            st.session_state["skill_results"] = recommend_missing_skills_hybrid(
+                job_title=job_title, skills=skills
+            )
+            st.session_state["job_results"] = recommend_jobs(
+                job_title=job_title, skills=skills, location=location
             )
 
-            input_data = None
+tab_skills, tab_jobs = st.tabs(["Gợi ý Skills", "Gợi ý Jobs"])
 
-            if input_mode == "Manual entry":
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+with tab_skills:
+    st.markdown(
+        '<div class="section-note" style="margin-top:14px">Kết hợp BM25 và Embedding qua Reciprocal Rank Fusion · Top 10 skills còn thiếu</div>',
+        unsafe_allow_html=True,
+    )
+    render_skill_results(st.session_state.get("skill_results", []))
 
-                job_title = st.text_input("Job Title", value="Data Analyst", placeholder="e.g. Data Engineer")
-                skills = st.text_area(
-                    "Current Skills",
-                    value="SQL, Power BI, Excel",
-                    height=110,
-                    placeholder="e.g. Python, SQL, Tableau, Machine Learning",
-                )
-                location = st.text_input("Location", value="Ho Chi Minh, Vietnam", placeholder="e.g. Hanoi, Vietnam")
-
-                input_data = {
-                    "job_title": job_title,
-                    "skills": skills,
-                    "location": location,
-                }
-
-            else:
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-                uploaded_file = st.file_uploader(
-                    "Upload your CV",
-                    type=["pdf"],
-                    label_visibility="collapsed",
-                )
-
-                if uploaded_file is not None:
-                    if st.button("Extract CV", use_container_width=True):
-                        with st.spinner("Extracting CV data..."):
-                            cv_path = save_uploaded_cv(uploaded_file)
-                            extracted = extract_cv_file(cv_path)
-                        st.session_state["cv_extracted"] = extracted
-
-                extracted = st.session_state.get("cv_extracted")
-
-                if extracted:
-                    st.success("CV extracted successfully.")
-                    st.json(extracted)
-                    input_data = {
-                        "job_title": extracted.get("job_title", "Unknown"),
-                        "skills": extracted.get("current_skills", []),
-                        "location": extracted.get("location", "Unknown"),
-                    }
-
-            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-
-            run_button = st.button("Find Matching Jobs", type="primary", use_container_width=True)
-
-        # RESULT PANEL
-        with right_col:
-            st.markdown('<div class="section-label">Results</div>', unsafe_allow_html=True)
-
-            if run_button:
-                if not input_data:
-                    st.error("Please provide your information or upload a CV first.")
-                    st.stop()
-
-                if not str(input_data.get("job_title", "")).strip():
-                    st.error("Job title is required.")
-                    st.stop()
-
-                with st.spinner("Searching for matching jobs..."):
-                    result = run_recommend_once(
-                        model=model,
-                        runtime_indexes=runtime_indexes,
-                        input_data=input_data,
-                    )
-                st.session_state["recommend_result"] = result
-
-            result = st.session_state.get("recommend_result")
-
-            if result:
-                st.markdown('<div class="section-label">Top 10 Matching Jobs</div>', unsafe_allow_html=True)
-                show_job_cards(result["top_jobs"])
-
-                st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
-                st.markdown('<div class="section-label">Recommended Skills to Learn</div>', unsafe_allow_html=True)
-                show_missing_skills(result["missing_skills"])
-            else:
-                st.markdown(
-                    """
-                    <div style="
-                        display:flex; flex-direction:column; align-items:center;
-                        justify-content:center; padding: 80px 0; text-align:center;
-                    ">
-                        <div style="font-size:40px; margin-bottom:16px;">🔍</div>
-                        <div style="font-size:16px; font-weight:600; color:#475569; margin-bottom:8px;">
-                            Ready to find your next opportunity
-                        </div>
-                        <div style="font-size:13px; color:#334155;">
-                            Fill in your details on the left and click <strong style="color:#3b82f6">Find Matching Jobs</strong>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-    # ── TAB 2: Power BI ────────────────────────────────────────────────────────
-    with tab_powerbi:
-        st.markdown('<div class="section-label">Market Analytics Dashboard</div>', unsafe_allow_html=True)
-        show_powerbi_embed()
-
-
-if __name__ == "__main__":
-    main()
+with tab_jobs:
+    st.markdown(
+        '<div class="section-note" style="margin-top:14px">Lọc theo location, xếp hạng bằng FAISS theo title và skills · Top 10 jobs phù hợp</div>',
+        unsafe_allow_html=True,
+    )
+    render_job_results(st.session_state.get("job_results", pd.DataFrame()))

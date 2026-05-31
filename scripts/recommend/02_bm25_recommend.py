@@ -1,9 +1,3 @@
-"""
-Load BM25Plus model (pickle) từ MinIO → interactive query.
-
-Không cần rebuild — load pickle là dùng luôn.
-"""
-
 import sys
 from pathlib import Path
 
@@ -11,6 +5,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
+load_dotenv()
 
 from src.recommendation.core.model_bm25 import BM25PlusRecommender
 from src.config import GOLD_KAGGLE_BM25_MODEL
@@ -21,11 +16,8 @@ def main():
     if sys.stdout.encoding.lower() != 'utf-8':
         sys.stdout.reconfigure(encoding='utf-8')
 
-    load_dotenv()
 
-    print("==================================================")
     print("BM25Plus — Load & Query từ MinIO")
-    print("==================================================")
 
     print("Đang tải model từ MinIO...")
     client = get_minio_client()
@@ -35,8 +27,7 @@ def main():
     )
 
     n_roles = len(recommender.get_roles())
-    print(f"✅ Tải thành công! {n_roles} roles. Sẵn sàng query.")
-    print("--------------------------------------------------")
+    print(f"Tải thành công! {n_roles} roles. Sẵn sàng query.")
 
     while True:
         print("\nNhập thông tin (gõ 'q' để thoát):")
@@ -51,7 +42,7 @@ def main():
         user_skills = [s.strip() for s in skills_input.split(",")] if skills_input else []
 
         query_display = f"{target_role} {' '.join(user_skills)}".strip()
-        print(f"\n  🔍 Query: \"{query_display}\"")
+        print(f"\nQuery: \"{query_display}\"")
 
         results = recommender.query(
             target_role=target_role,
