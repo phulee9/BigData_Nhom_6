@@ -59,6 +59,11 @@ def load_runtime_index(
     title_index = faiss.read_index(str(title_index_path))
     skills_index = faiss.read_index(str(skills_index_path))
 
+    # IVFFlat: nprobe KHÔNG được lưu vào file index -> reset ve 1 sau khi load.
+    # HNSWFlat: efSearch duoc luu vao file -> set tuong minh cho ro rang.
+    _configure_index(title_index,  label="title")
+    _configure_index(skills_index, label="skills")
+
     validate_runtime_index(
         source_name=source_name,
         metadata=metadata,
@@ -129,3 +134,34 @@ def validate_runtime_index(
     print(f"     Metadata rows : {metadata_rows}")
     print(f"     Title vectors : {title_vectors}")
     print(f"     Skills vectors: {skills_vectors}")
+
+# ── Index config sau khi load ──────────────────────────────────────────────
+
+# Config này phải khớp với config đã dùng trong benchmark
+_IVF_NPROBE   = 16   # benchmark_title.ipynb → best nprobe
+_HNSW_EFSEARCH = 16  # benchmark_skills.ipynb → best efSearch
+
+def _configure_index(index: faiss.Index, label: str) -> None:
+    """
+    Set runtime params sau khi load index từ file.
+
+    - IVFFlat : nprobe bị reset về 1 khi load → phải set lại
+    - HNSWFlat: efSearch được lưu vào file → set lại cho tường minh
+    - FlatIP   : không có param nào cần set
+    """
+    index_type = type(index).__name__
+
+    if isinstance(index, faiss.IndexIVF):
+        # Bao gồm IndexIVFFlat, IndexIVFPQ, ...
+        old = index.nprobe
+        index.nprobe = _IVF_NPROBE
+        print(f"  [{label}] IVF index — nprobe: {old} → {index.nprobe}")
+
+    elif isinstance(index, faiss.IndexHNSWFlat):
+        old = index.hnsw.efSearch
+        index.hnsw.efSearch = _HNSW_EFSEARCH
+        print(f"  [{label}] HNSW index — efSearch: {old} → {index.hnsw.efSearch}")
+
+    else:
+        # FlatIP hoặc loại khác — không cần config
+        print(f"  [{label}] {index_type} — no runtime config needed")
