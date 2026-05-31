@@ -1,9 +1,3 @@
-"""
-Monster.com.vn Job Crawler
-Crawl all jobs from monster.com.vn until no more jobs found
-Data is saved after each page crawled
-Usage: python monster_jobs_crawler.py
-"""
 
 import asyncio
 import json
