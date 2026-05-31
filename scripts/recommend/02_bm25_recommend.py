@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
+load_dotenv()
 
 from src.recommendation.core.model_bm25 import BM25PlusRecommender
 from src.config import GOLD_KAGGLE_BM25_MODEL
@@ -15,7 +16,6 @@ def main():
     if sys.stdout.encoding.lower() != 'utf-8':
         sys.stdout.reconfigure(encoding='utf-8')
 
-    load_dotenv()
 
     print("BM25Plus — Load & Query từ MinIO")
 

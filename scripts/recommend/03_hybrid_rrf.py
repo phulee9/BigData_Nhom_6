@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
+load_dotenv()
 
 from src.config import EMBEDDING_MODEL, GOLD_KAGGLE_BM25_MODEL
 from src.recommendation.core.model_bm25 import BM25PlusRecommender
@@ -26,7 +27,6 @@ def main():
     if sys.stdout.encoding.lower() != 'utf-8':
         sys.stdout.reconfigure(encoding='utf-8')
 
-    load_dotenv()
 
     print("Hybrid RRF — BM25Plus + Embedding")
 
